@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+coverage/
+cache/
+tmp/
+runtime/
+storage/
+.DS_Store
