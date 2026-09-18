@@ -1,0 +1,117 @@
+/**
+ * Postyar Connector — استایل‌های مدیریتی (راست‌به‌چپ).
+ */
+
+@font-face {
+	font-family: 'Vazirmatn';
+	src: url('../fonts/Vazirmatn-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Vazirmatn';
+	src: url('../fonts/Vazirmatn-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+.postyar-wrap {
+	font-family: 'Vazirmatn', 'Tahoma', sans-serif;
+}
+
+.postyar-wrap h1,
+.postyar-wrap h2 {
+	font-family: 'Vazirmatn', 'Tahoma', sans-serif;
+}
+
+.postyar-lead {
+	max-width: 720px;
+	color: #3f3f46;
+}
+
+.postyar-secret-hint {
+	font-size: 14px;
+	letter-spacing: 1px;
+	padding: 4px 10px;
+	background: #f4f4f5;
+	border: 1px solid #e4e4e7;
+	border-radius: 4px;
+}
+
+.postyar-secret-change {
+	margin-top: 8px;
+}
+
+.postyar-secret-change summary {
+	cursor: pointer;
+	color: #0f766e;
+	font-weight: 700;
+}
+
+.postyar-card {
+	max-width: 640px;
+	padding: 14px 18px;
+	border: 1px solid #e4e4e7;
+	border-right-width: 4px;
+	border-radius: 6px;
+	background: #fff;
+	margin-top: 8px;
+}
+
+.postyar-status--ok .postyar-status-text {
+	color: #15803d;
+	font-weight: 700;
+}
+
+.postyar-status--ok {
+	border-right-color: #22c55e;
+	background: #f0fdf4;
+}
+
+.postyar-status--error .postyar-status-text {
+	color: #b91c1c;
+	font-weight: 700;
+}
+
+.postyar-status--error {
+	border-right-color: #ef4444;
+	background: #fef2f2;
+}
+
+.postyar-status--idle .postyar-status-text {
+	color: #52525b;
+	font-weight: 700;
+}
+
+.postyar-status--idle {
+	border-right-color: #a1a1aa;
+}
+
+.postyar-test-result {
+	margin-inline-start: 10px;
+	font-weight: 700;
+}
+
+.postyar-test-result.is-ok {
+	color: #15803d;
+}
+
+.postyar-test-result.is-error {
+	color: #b91c1c;
+}
+
+.postyar-log-table {
+	max-width: 900px;
+}
+
+.postyar-log-table code {
+	direction: ltr;
+	unicode-bidi: embed;
+}
+
+.postyar-wrap .description {
+	direction: rtl;
+}

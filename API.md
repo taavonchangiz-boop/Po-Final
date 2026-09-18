@@ -1,0 +1,164 @@
+# Postyar — API Reference — v1.0.0
+
+> **مرجع متعارف / Canonical source:** `docs/contracts/api-contract.md` — این فایل رندرِ همان قرارداد برای مرور سریع است؛ در صورت مغایرت، فایل قرارداد حاکم است. Health endpoints خارج از namespace: `/health`, `/health/live`, `/health/ready`.
+
+---
+
+# Postyar API Contract — v1
+
+Base namespace: `/api/v1`. Health: `/health`, `/health/live`, `/health/ready` (no namespace).
+All bodies are JSON unless stated. Cookies: `py_session` (HttpOnly, SameSite=Lax, Secure in production).
+CSRF: double-submit — non-GET requests require header `X-CSRF-Token` matching the `py_csrf` cookie.
+
+## Envelope
+
+Success: `{ "success": true, "data": ... }` — Errors: `{ "success": false, "error": { "code": "<STABLE_CODE>", "message": "<safe Persian>", "requestId": "<id>" } }`
+
+Stable error codes: `VALIDATION_ERROR`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`, `PLAN_LIMIT`, `PAYMENT_ERROR`, `PROVIDER_ERROR`, `INTERNAL_ERROR`.
+
+Pagination: offset lists accept `page` (1-based), `limit` (default 20, max 100) → `{ items, total, page, limit }`.
+Cursor lists accept `cursor` (event/delivery id), `limit` → `{ items, nextCursor }`.
+
+## Auth (public)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | /auth/register | Registration (نام، نام خانوادگی، موبایل، ایمیل، نام کسب‌وکار، نوع فعالیت، رمز عبور، تکرار، پذیرش قوانین، کد دعوت اختیاری). First user via DB-mutex becomes SUPER_ADMIN; others USER. |
+| POST | /auth/login | Login; sets session cookie; rotates on privileged actions. |
+| POST | /auth/logout | Revokes session server-side. |
+| POST | /auth/password-reset | Request reset (generic response; token hashed, 30 min, single-use). |
+| POST | /auth/password-reset/confirm | Confirm reset with token; revokes all sessions. |
+| POST | /auth/change-password | Authenticated; revokes other sessions. |
+| GET | /me | Current user + tenant summary (plan, unread notifications count). |
+
+## Channels (`channels` module)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /channels | List own channels (paginated, filter by provider/status). |
+| POST | /channels | Create: `{provider, chatId, title, botToken}`. Token encrypted at rest; status PENDING until verify. Plan limit enforced. |
+| GET | /channels/:id | Channel detail. |
+| PATCH | /channels/:id | Update title / rotate bot token. |
+| DELETE | /channels/:id | Disconnect (soft: status DISCONNECTED). |
+| POST | /channels/:id/verify | Live provider health check (getMe/getChat) → ACTIVE/ERROR. |
+| POST | /channels/:id/disable | Disconnect keeping history. |
+
+## Posts & deliveries (`publishing` module)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /posts | List (paginated; filter status, q). |
+| POST | /posts | Create post `{title?, body, mediaId?, channelIds[], scheduleAt?}`. Creates deliveries in the same transaction; scheduleAt>now → SCHEDULED + schedule row, else enqueue now via outbox. |
+| GET | /posts/:id | Post detail incl. per-channel delivery states. |
+| PATCH | /posts/:id | Edit while DRAFT/SCHEDULED. |
+| DELETE | /posts/:id | Cancel (dangling deliveries → CANCELLED). |
+| POST | /posts/:id/publish-now | Immediately enqueue deliveries (idempotent per post+channel). |
+| GET | /deliveries?postId= | Delivery list w/ state, attempts, safe error, retry-when. |
+| POST | /deliveries/:id/retry | Retry a FAILED delivery (bounded by maxAttempts). |
+
+## Schedules (`publishing` module)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /schedules | List own schedules. |
+| PATCH | /schedules/:id | Reschedule / pause / resume (Jalali UI converts; API takes ISO UTC). |
+| DELETE | /schedules/:id | Cancel schedule. |
+
+## Bots (`bots` module)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /bots | List own bots. |
+| POST | /bots | Register bot token (external provisioning guided in UI); verify getMe; plan limit enforced. |
+| GET | /bots/:id | Detail incl. health, webhook state, commands, AI config. |
+| PATCH | /bots/:id | Update title/commands/AI config/rotate token. |
+| DELETE | /bots/:id | Delete bot (webhook de-registered where supported). |
+| POST | /bots/:id/verify | Live getMe check. |
+| POST | /bots/:id/enable, /bots/:id/disable | Toggle. |
+| GET | /bots/:id/events | Recent bot events (paginated). |
+| GET | /bots/:id/users | Bot users where provider data permits (privacy-minimal). |
+
+## Workflows (`workflows` module)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /workflows?botId= | List. |
+| POST | /workflows | Create `{botId, name, definition}` (trigger + steps; server validates against capability registry + safety limits). |
+| PATCH | /workflows/:id | Update / activate / deactivate. |
+| DELETE | /workflows/:id | Delete. |
+| GET | /workflows/:id/runs | Run history (paginated). |
+
+## AI (`ai` module)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | /ai/jobs | Enqueue `{purpose, prompt, system?, provider?, model?, botId?}` → QUEUED (202). Quota enforced server-side. |
+| GET | /ai/jobs | List own jobs. |
+| GET | /ai/jobs/:id | Job status/output (poll). |
+| GET | /ai/usage | Current month credits vs plan quota. |
+
+## Gold (`gold` module)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /gold/prices | Latest prices per asset (own tenant). |
+| POST | /gold/prices | Manual price entry `{asset, price}`. |
+| GET | /gold/configs | List gold publishing configs. |
+| PUT | /gold/configs/:channelId | Upsert config (assets, frequency, timeOfDay, timezone, template). |
+| POST | /gold/publish | Manual publish now (queued delivery; idempotent per config+day+change). |
+
+## WooCommerce (`wordpress` module)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /wordpress/sites | List sites + connection info (secret shown once at creation). |
+| POST | /wordpress/sites | Create site → `{publicId, secret(once)}` for plugin pairing. |
+| POST | /wordpress/sites/:id/rotate-secret | Rotate HMAC secret. |
+| DELETE | /wordpress/sites/:id | Revoke. |
+| GET | /wordpress/sites/:id/products | Synced products (paginated). |
+| POST | /wordpress/sites/:id/sync | Trigger pull-sync (queued). |
+
+## Provider webhooks (public, signature-checked)
+| Method | Path | Auth |
+|---|---|---|
+| POST | /webhooks/telegram/:botId | Header `X-Telegram-Bot-Api-Secret-Token` == bot.webhookSecret (hash_equals). |
+| POST | /webhooks/bale/:botId | Header `X-Telegram-Bot-Api-Secret-Token` when provider supports; else required custom header `X-Postyar-Secret` set via Bale webhook params. Dedup by update id. |
+| POST | /webhooks/wordpress/:publicId | Header `X-Postyar-Signature: sha256=<HMAC(body, site secret)>`, timestamp tolerance 5 min, body ≤ 256KB. |
+| GET | /r/:code | Public click redirect (302 to stored URL only; open-redirect safe). |
+
+## Billing
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /plans | Public plan list (Persian names, limits, prices). |
+| GET | /subscription | Current subscription + plan + limits. |
+| POST | /subscription/change | `{planId}` → creates payment (SUBSCRIPTION purpose) → gateway redirect URL. |
+| POST | /payments | `{purpose, planId?, amount?}` create payment → `{redirectUrl}`. |
+| GET | /payments | History (paginated). |
+| GET | /payments/callback/:gateway?payment_id=..&Authority=.. | Browser return; server-to-server verify; idempotent; wallet/subscription effects transactional; returns redirect path for SPA. |
+| GET | /wallet | Balance + recent entries. |
+| GET | /wallet/entries | Ledger (paginated). |
+| POST | /wallet/topup | Create WALLET_TOPUP payment. |
+| GET | /referrals | Own code, referred users, total rewards. |
+
+## Notifications / analytics / media / support / admin
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /notifications | List (paginated, unread filter). |
+| POST | /notifications/:id/read, /notifications/read-all | Mark read. |
+| GET | /analytics/overview?days=14 | KPI cards (posts sent, success rate, bot messages, AI credits). |
+| GET | /analytics/publishing?days=30 | Daily series for charts. |
+| GET | /analytics/channels, /analytics/bots, /analytics/ai | Domain reports. |
+| GET | /analytics/timeline?cursor= | Activity timeline (cursor). |
+| POST | /media | Multipart upload (image/*, ≤10MB, magic-byte check, WebP convert when applicable). |
+| GET | /media, /media/:id | List / metadata. |
+| GET | /media/:id/content | Authorized streaming (owner or admin only). |
+| GET/POST | /support/tickets | List / create ticket. |
+| GET | /support/tickets/:id | Thread. |
+| POST | /support/tickets/:id/messages | Reply (user or staff). |
+| GET | /admin/stats | Platform KPIs (SUPER_ADMIN/ADMIN only). |
+| GET | /admin/users | Users list (paginated; NEVER password hashes). |
+| PATCH | /admin/users/:id | role/status change (audited, server-checked). |
+| GET | /admin/audit-logs | Audit trail (paginated, filterable). |
+| GET | /admin/payments, /admin/tickets | Operational lists. |
+| POST | /admin/tickets/:id/reply | Staff reply. |
+| GET/PATCH | /admin/plans, /admin/plans/:id | Plan management. |
+| GET/PATCH | /admin/settings | System settings (referral reward, retention days). |
+
+## Behavioral contracts
+- All tenant queries derive ownership from session user; IDs never grant access (IDOR-safe).
+- Plan limits (channels/bots/posts/AI/storage/schedules) enforced in service layer before mutations.
+- Money: BIGINT Rial; wallet mutation = transactional `SELECT ... FOR UPDATE` + ledger insert with `balance_after`.
+- Idempotency keys: payment verification, wallet moves, referral rewards, delivery enqueue, expiry notices (`expiry-7d:{subscriptionId}`), WP webhook events, gold publishes.
+- Delivery retries: exponential backoff (60s, 5m, 30m, 2h, 6h), classified errors — permanent/validation/auth errors never retry.
+- 7-day expiry notice: exactly once per subscription (durable unique key), delivered to configured channels + in-app.

@@ -1,0 +1,105 @@
+name: CI
+
+# Postyar CI — master prompt §134 / §136-137
+# Jobs: backend (typecheck+tests+build), frontend (typecheck+build),
+# plugin (php -l best-effort), release-check (runs scripts/release-check.sh).
+#
+# NOTE: the release-check job intentionally runs the script as-is with
+# continue-on-error: false. It turns green once the release manifest
+# SHA256SUMS is generated at release packaging (see DEPLOYMENT.md §14 /
+# scripts/release-check.sh header for the exact command). Failures are NOT
+# concealed to produce a green result (master prompt §137).
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (typecheck · test · build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install (npm ci)
+        working-directory: app
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: app
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        working-directory: app
+        run: npm test
+
+      - name: Build (tsc → dist/)
+        working-directory: app
+        run: npm run build
+
+  frontend:
+    name: frontend (typecheck · build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (npm ci)
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Build (vite → dist/)
+        working-directory: frontend
+        run: npm run build
+
+  plugin:
+    name: wordpress plugin (php -l)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint PHP files (php -l) — skip with notice if php unavailable
+        run: |
+          if command -v php >/dev/null 2>&1; then
+            files=$(find wordpress-plugin -name '*.php' -type f 2>/dev/null || true)
+            if [ -z "$files" ]; then
+              echo "NOTICE: no PHP files found in wordpress-plugin/ — nothing to lint / فایلی برای بررسی نبود"
+            else
+              echo "$files" | xargs -n1 php -l
+            fi
+          else
+            echo "NOTICE: php not available on runner — php -l skipped / PHP در دسترس نیست، بررسی نحوی رد شد"
+          fi
+
+  release-check:
+    name: release check (§136)
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run scripts/release-check.sh
+        run: bash scripts/release-check.sh

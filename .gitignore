@@ -10,3 +10,5 @@ tmp/
 runtime/
 storage/
 .DS_Store
+backups/
+.deps-hash

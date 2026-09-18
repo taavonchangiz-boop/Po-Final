@@ -95,3 +95,15 @@ API/worker/scheduler all handle SIGTERM/SIGINT: stop intake, drain in-flight, cl
 
 ## 7. Health semantics
 `/health/live`: process alive (no dependencies). `/health/ready`: MySQL `SELECT 1` + Redis `PING` with 2s timeouts, truthful 503 on failure. `/health`: summary incl. versions.
+
+---
+
+## 8. Deployment addendum (appended by task 4-f — 4.07 deployment engineering; section 8 onward is new, §1-7 above unchanged)
+
+Binding refinements of ADR-005, detailed operationally in `DEPLOYMENT.md`:
+
+- **Two supported topologies.** (A) single domain: SPA at `public_html`, Passenger mounted at `/api` (Application URL) + `/health` proxied to the Passenger internal port via Apache `[P]` rewrite. (B) `api.domain` + `app.domain`: one Passenger process still; `app.domain` proxies `/api` + `/health` to `127.0.0.1:PORT` so the SPA stays same-origin and CORS never triggers (`buildApp.ts` accepts only `env.APP_URL` in production).
+- **Passenger contract:** app root `postelrobbal/app`, startup file `dist/server.js` (never `src/`), `Passengerfile.js` pins `passenger_app_type node`, `environment production`, `min_instances 1`, `max_processes 1`, `max_requests 1000` (process budget: exactly one API process). Soft restart = `touch app/tmp/restart.txt`.
+- **Scheduler supervision without systemd:** cron line `* * * * * /usr/bin/flock -n /tmp/postyar-scheduler.lock node .../app/dist/workers/scheduler.js` — flock is the lock-and-exit guard (contract §126-127): the loop process holds the lock for life; cron restarts it within 60s if it dies; additional invocations exit immediately; the internal Redis lock (`lock:scheduler`, SET NX EX 120) is the second defense layer.
+- **Deploy automation:** `scripts/deploy.sh` is the only sanctioned deploy path (preflight → deps-if-stale → build-if-needed → forward-only migration via `dist/db/migrate.js` → restart.txt → `/health/ready` poll ≤30s). It never installs Redis, never recreates the DB, never runs the test suite, never spawns workers.
+- **Data safety:** migrations forward-only; migration runner refuses on drift; rollback = redeploy previous tag + `scripts/restore-db.sh` for data (documented in `DEPLOYMENT.md §14`).

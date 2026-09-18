@@ -1,0 +1,9 @@
+import type { ErrorClass } from '../core/errors.js';
+
+export type ProviderKind = 'TELEGRAM' | 'BALE' | 'RUBIKA';
+export interface ProviderButton { text: string; url?: string; callbackData?: string }
+export interface ProviderCapabilities { sendText: boolean; sendMedia: boolean; editMessage: boolean; deleteMessage: boolean; buttons: boolean; webhookRegistration: boolean; updateRetrieval: boolean; botIdentity: boolean; healthCheck: boolean }
+export type SendOutcome = { ok: true; messageId: string } | { ok: false; errorClass: ErrorClass; safeMessage: string; detail?: string };
+export type UpdateEnvelope = { externalEventId: string; type: string; chatId?: string; senderRef?: string; text?: string; callbackData?: string; raw: Record<string, unknown> };
+export interface ChannelProvider { kind: ProviderKind; capabilities: ProviderCapabilities; verifyChat(chatId: string): Promise<{ ok: boolean; title?: string; username?: string; error?: string }>; sendText(chatId: string, text: string, buttons?: ProviderButton[][]): Promise<SendOutcome>; sendPhoto(chatId: string, photoUrl: string, caption?: string): Promise<SendOutcome>; editMessageText(chatId: string, messageId: string, text: string): Promise<SendOutcome>; deleteMessage(chatId: string, messageId: string): Promise<SendOutcome>; }
+export interface BotProvider { kind: ProviderKind; capabilities: ProviderCapabilities; getMe(): Promise<{ ok: boolean; id?: string; username?: string; title?: string; error?: string }>; setWebhook(url: string, secret: string): Promise<{ ok: boolean; error?: string }>; deleteWebhook(): Promise<{ ok: boolean; error?: string }>; getUpdates(offset: number): Promise<{ ok: boolean; updates?: UpdateEnvelope[]; error?: string }>; sendMessage(chatId: string, text: string, buttons?: ProviderButton[][]): Promise<SendOutcome>; }
