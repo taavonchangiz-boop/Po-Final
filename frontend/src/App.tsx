@@ -34,6 +34,7 @@ export function App() {
         <Route element={<LandingLayout />}>
           <Route path="/" element={<Landing />} />
           <Route path="/payment/result" element={<PaymentResult />} />
+          <Route path="*" element={<Landing />} />
         </Route>
         <Route path="/dashboard" element={<DashboardLayout />}>
           <Route index element={<Dashboard />} />
@@ -57,7 +58,6 @@ export function App() {
           <Route path="support" element={<Support />} />
           <Route path="admin" element={<Admin />} />
         </Route>
-        <Route path="*" element={<Landing />} />
       </Routes>
     </Suspense>
   );
