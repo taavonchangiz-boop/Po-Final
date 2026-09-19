@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
 import { loadEnv } from '../../config/env.js';
 import { createWalletTopup, handleCallback } from './payment.service.js';
-import { listPayments } from './payment.service.js';
+import { listPayments, createSubscriptionIntent, attachReceipt } from './payment.service.js';
 import { parseWith } from '../../core/validation.js';
+import { uploadMedia } from '../media/media.service.js';
 
 function auth(req: FastifyRequest): { id: string } {
   if (!req.user) throw new AppError(ERR.AUTH_REQUIRED());
@@ -15,6 +16,17 @@ const topupSchema = z.object({
   amountRial: z.coerce.number().int().min(100_000).max(2_000_000_000),
 });
 
+const intentSchema = z.object({
+  kind: z.literal('subscription'),
+  planId: z.string().min(1).max(64),
+  method: z.enum(['online', 'card_to_card']),
+  months: z.coerce.number().int().min(1).max(12).optional(),
+});
+
+const RECEIPT_MIME_ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
+const ulidish = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+
 function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
   return parseWith(schema, body);
 }
@@ -24,6 +36,60 @@ export async function registerPaymentRoutes(app: FastifyInstance): Promise<void>
   app.post('/payments/wallet-topup', { preHandler: [app.requireAuth] }, async (req) => {
     const input = parse(topupSchema, req.body);
     const result = await createWalletTopup(auth(req).id, input.amountRial);
+    return { success: true, data: result };
+  });
+
+  // Unified purchase intent (contract 14-contract item 3):
+  //   online       → {paymentId, redirectUrl} (existing Zarinpal path)
+  //   card_to_card → {paymentId, reference, cards}  (admin-reviewed receipt)
+  app.post('/payments/intent', { preHandler: [app.requireAuth] }, async (req) => {
+    const input = parse(intentSchema, req.body);
+    const result = await createSubscriptionIntent(auth(req).id, input);
+    return { success: true, data: result };
+  });
+
+  // Card-to-card receipt upload (multipart "file" ≤5MB, JPG/PNG/WebP/PDF,
+  // magic-byte verified, private storage). Payment must belong to the caller.
+  app.post('/payments/:id/receipt', { preHandler: [app.requireAuth] }, async (req) => {
+    const me = auth(req);
+    const { id } = req.params as { id: string };
+    if (!ulidish.test(id)) throw new AppError(ERR.VALIDATION('شناسه معتبر نیست.'));
+    if (!req.isMultipart()) {
+      throw new AppError(ERR.PAYMENT_RECEIPT_INVALID('ارسال رسید باید به‌صورت multipart با فیلد «file» انجام شود.'));
+    }
+
+    let filePart: { buffer: Buffer; mime: string } | null = null;
+    let note: string | null = null;
+    for await (const part of req.parts()) {
+      if (part.type === 'file') {
+        if (filePart) continue; // multipart limit is files:1 — defensive
+        const mime = part.mimetype.toLowerCase();
+        if (!RECEIPT_MIME_ALLOWED.has(mime)) {
+          throw new AppError(ERR.PAYMENT_RECEIPT_INVALID('فرمت فایل مجاز نیست. تصویر (JPG، PNG، WebP) یا PDF ارسال کنید.'));
+        }
+        let buffer: Buffer;
+        try {
+          buffer = await part.toBuffer();
+        } catch {
+          throw new AppError(ERR.PAYMENT_RECEIPT_INVALID('حجم فایل بیش از حد مجاز است.'));
+        }
+        if (buffer.length > RECEIPT_MAX_BYTES) {
+          throw new AppError(ERR.PAYMENT_RECEIPT_INVALID('حجم فایل باید حداکثر ۵ مگابایت باشد.'));
+        }
+        filePart = { buffer, mime };
+      } else if (part.fieldname === 'note' && typeof part.value === 'string') {
+        note = part.value;
+      }
+    }
+    if (!filePart) throw new AppError(ERR.PAYMENT_RECEIPT_INVALID('فایلی ارسال نشده است.'));
+
+    // uploadMedia re-validates size + declared-vs-actual magic bytes.
+    const media = await uploadMedia(me.id, {
+      buffer: filePart.buffer,
+      mimeType: filePart.mime,
+      maxBytes: RECEIPT_MAX_BYTES,
+    });
+    const result = await attachReceipt(me.id, id, { mediaId: media.id, note });
     return { success: true, data: result };
   });
 

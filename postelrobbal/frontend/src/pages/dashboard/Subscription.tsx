@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiRequestError, type PlanDto } from '../../lib/api';
-import { Button, Card, EmptyState, Field, PageLoading, Select, StatusBadge } from '../../components/ui';
-import { faDate, faDigits, faMoney, faNumber } from '../../lib/format';
+import { Button, Card, EmptyState, Field, Modal, PageLoading, Select, StatusBadge } from '../../components/ui';
+import { faDate, faDigits, faFileSize, faMoney, faNumber } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
 import { useToast } from '../../lib/toast';
 
@@ -29,25 +29,89 @@ const FEATURE_LABELS_FA: Record<string, string> = {
   api_access: 'دسترسی API',
 };
 
+/** Contract 14-contract item 1: public payment-method gating. */
+interface CardInfo {
+  id: string;
+  bankName: string;
+  cardNumber: string;
+  holderName: string;
+}
+
+interface PaymentSettingsDto {
+  onlineEnabled: boolean;
+  cardToCardEnabled: boolean;
+  provider: string;
+  cards?: CardInfo[];
+}
+
+type IntentResult =
+  | { paymentId: string; redirectUrl: string }
+  | { paymentId: string; reference: string; cards: CardInfo[] };
+
+/** Contract item 3 gate errors → dedicated Persian copy, shown inline. */
+const PAYMENT_GATE_FA: Record<string, string> = {
+  GATEWAY_NOT_CONFIGURED:
+    'درگاه پرداخت آنلاین هنوز پیکربندی نشده است؛ لطفاً روش کارت به کارت را انتخاب کنید یا بعداً تلاش کنید.',
+  PAYMENT_METHOD_DISABLED:
+    'این روش پرداخت در حال حاضر غیرفعال است؛ لطفاً روش دیگری را انتخاب کنید.',
+};
+
+const RECEIPT_MIME_ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
+const RECEIPT_ACCEPT = '.jpg,.jpeg,.png,.webp,.pdf';
+
 function limitText(value: number | undefined | null): string {
   if (!value || value <= 0) return 'نامحدود';
   return faNumber(value);
 }
 
+function formatCardNumber(raw: string): string {
+  return raw.replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ').trim();
+}
+
+function paymentErrorMessage(e: unknown): string {
+  if (e instanceof ApiRequestError && PAYMENT_GATE_FA[e.code]) return PAYMENT_GATE_FA[e.code];
+  if (e instanceof ApiRequestError) return e.message;
+  return 'ایجاد درخواست پرداخت ناموفق بود. دوباره تلاش کنید.';
+}
+
+type PayStep = 'method' | 'card' | 'done';
+
+interface PayIntent {
+  paymentId: string;
+  reference?: string;
+  cards?: CardInfo[];
+}
+
 export default function Subscription() {
-  const { me } = useAuth();
+  const { me, refresh } = useAuth();
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState<PlanDto[]>([]);
-  const [months, setMonths] = useState<number>(1);
-  const [buyingCode, setBuyingCode] = useState<string | null>(null);
-  const [selectedCode, setSelectedCode] = useState<string | null>(null);
+
+  // Public payment gating (contract item 1)
+  const [paySettings, setPaySettings] = useState<PaymentSettingsDto | null>(null);
+
+  // Checkout modal (contract items 3 + 4)
+  const [payPlan, setPayPlan] = useState<PlanDto | null>(null);
+  const [step, setStep] = useState<PayStep>('method');
+  const [months, setMonths] = useState(1);
+  const [intent, setIntent] = useState<PayIntent | null>(null);
+  const [payError, setPayError] = useState('');
+  const [intentBusy, setIntentBusy] = useState<'online' | 'card_to_card' | null>(null);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const receiptInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const d = await api.get<{ plans?: PlanDto[] }>('/api/v1/subscriptions/plans');
-      setPlans(d.plans ?? []);
+      const [plansRes, pay] = await Promise.all([
+        api.get<{ plans?: PlanDto[] }>('/api/v1/subscriptions/plans'),
+        api.get<PaymentSettingsDto>('/api/v1/settings/payments').catch(() => null),
+      ]);
+      setPlans(plansRes.plans ?? []);
+      setPaySettings(pay);
     } catch (err) {
       toast.error(err instanceof ApiRequestError ? err.message : 'دریافت پلن‌ها ناموفق بود.');
     } finally {
@@ -59,19 +123,100 @@ export default function Subscription() {
     void load();
   }, [load]);
 
-  const checkout = async (planCode: string) => {
-    setBuyingCode(planCode);
+  const openPayModal = (plan: PlanDto) => {
+    setPayPlan(plan);
+    setStep('method');
+    setMonths(1);
+    setIntent(null);
+    setPayError('');
+    setReceiptFile(null);
+  };
+
+  const closePayModal = () => {
+    setPayPlan(null);
+    setIntent(null);
+    setPayError('');
+    setReceiptFile(null);
+    setUploading(false);
+    setIntentBusy(null);
+  };
+
+  const createIntent = async (method: 'online' | 'card_to_card'): Promise<IntentResult | null> => {
+    if (!payPlan) return null;
+    setIntentBusy(method);
+    setPayError('');
     try {
-      const d = await api.post<{ redirectUrl?: string }>('/api/v1/subscriptions/checkout', { planCode, months });
-      if (d.redirectUrl) {
-        window.location.href = d.redirectUrl;
-        return;
-      }
-      toast.error('درگاه پرداخت در دسترس نیست؛ کمی بعد دوباره تلاش کنید.');
+      // Contract item 3: POST /payments/intent {kind, planId, method, months}
+      const d = await api.post<IntentResult>('/api/v1/payments/intent', {
+        kind: 'subscription',
+        planId: payPlan.id,
+        method,
+        months,
+      });
+      return d;
     } catch (err) {
-      toast.error(err instanceof ApiRequestError ? err.message : 'ایجاد پرداخت ناموفق بود.');
+      setPayError(paymentErrorMessage(err));
+      return null;
     } finally {
-      setBuyingCode(null);
+      setIntentBusy(null);
+    }
+  };
+
+  const payOnline = async () => {
+    const d = await createIntent('online');
+    if (d && 'redirectUrl' in d) {
+      window.location.assign(d.redirectUrl);
+    }
+  };
+
+  const payCardToCard = async () => {
+    const d = await createIntent('card_to_card');
+    if (d && 'reference' in d) {
+      setIntent(d);
+      setStep('card');
+    }
+  };
+
+  const pickReceipt = (file: File | null | undefined) => {
+    if (!file) return;
+    if (!RECEIPT_MIME_ALLOWED.has(file.type)) {
+      toast.error('فرمت فایل مجاز نیست. تصویر (JPG، PNG، WebP) یا PDF انتخاب کنید.');
+      return;
+    }
+    if (file.size > RECEIPT_MAX_BYTES) {
+      toast.error('حجم فایل باید حداکثر ۵ مگابایت باشد.');
+      return;
+    }
+    setReceiptFile(file);
+  };
+
+  const uploadReceipt = async () => {
+    if (!intent || !receiptFile) return;
+    setUploading(true);
+    setPayError('');
+    try {
+      // Contract item 4: multipart field "file" (≤5MB, magic-byte checked).
+      const fd = new FormData();
+      fd.append('file', receiptFile);
+      await api.postForm<{ paymentId: string; status: string }>(
+        `/api/v1/payments/${intent.paymentId}/receipt`,
+        fd
+      );
+      setStep('done');
+      void refresh(); // session carries subscription state — refresh it
+    } catch (err) {
+      setPayError(err instanceof ApiRequestError ? err.message : 'بارگذاری رسید ناموفق بود. دوباره تلاش کنید.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} کپی شد.`);
+    } catch {
+      toast.error('کپی خودکار ممکن نشد؛ لطفاً دستی کپی کنید.');
     }
   };
 
@@ -79,6 +224,10 @@ export default function Subscription() {
 
   const current = me?.subscription ?? null;
   const currentPlanCode = current?.planCode ?? null;
+  const onlineEnabled = paySettings?.onlineEnabled === true;
+  const cardToCardEnabled = paySettings?.cardToCardEnabled === true;
+  const modalCards = (intent?.cards ?? paySettings?.cards ?? []) as CardInfo[];
+  const noMethodAvailable = !onlineEnabled && !cardToCardEnabled;
 
   return (
     <div>
@@ -128,8 +277,7 @@ export default function Subscription() {
                 <Button
                   block
                   variant={isCurrent ? 'ghost' : 'primary'}
-                  loading={buyingCode === plan.code}
-                  onClick={() => setSelectedCode(plan.code)}
+                  onClick={() => openPayModal(plan)}
                 >
                   {isCurrent ? 'تمدید اشتراک' : 'انتخاب این پلن'}
                 </Button>
@@ -153,24 +301,7 @@ export default function Subscription() {
           </Card>
         )}
 
-        {selectedCode && (
-          <Card>
-            <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>تکمیل خرید</h2>
-            <Field label="مدت اشتراک" required hint="پس از انتخاب مدت، به درگاه بانکی هدایت می‌شوید.">
-              <Select value={String(months)} onChange={(e) => setMonths(Number(e.target.value))}>
-                {[1, 3, 6, 12].map((m) => (
-                  <option key={m} value={m}>{faDigits(m)} ماه</option>
-                ))}
-              </Select>
-            </Field>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <Button loading={buyingCode === selectedCode} onClick={() => void checkout(selectedCode)}>پرداخت و رفتن به درگاه</Button>
-              <Button variant="ghost" onClick={() => setSelectedCode(null)}>انصراف</Button>
-            </div>
-          </Card>
-        )}
-
-        {!current && !selectedCode && (
+        {!current && (
           <Card>
             <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>اشتراکی ندارید</h2>
             <p style={{ fontSize: 13.5, color: 'var(--text-2)' }}>
@@ -179,6 +310,223 @@ export default function Subscription() {
           </Card>
         )}
       </div>
+
+      {/* ---------- checkout modal: method → (card-to-card) → receipt → done ---------- */}
+      <Modal
+        open={Boolean(payPlan)}
+        onClose={closePayModal}
+        title={step === 'done' ? 'پرداخت ثبت شد' : 'تکمیل خرید اشتراک'}
+      >
+        {payPlan && step !== 'done' && (
+          <div
+            style={{
+              background: 'var(--brand-soft)',
+              border: '1px solid var(--brand)',
+              borderRadius: 12,
+              padding: '12px 16px',
+              marginBottom: 16,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div>
+              <strong style={{ fontSize: 14.5 }}>{payPlan.nameFa}</strong>
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{faNumber(payPlan.priceRial / 10)} تومان × {faDigits(months)} ماه</div>
+            </div>
+            <strong style={{ fontSize: 17, color: 'var(--brand-strong)' }}>{faMoney(payPlan.priceRial * months)}</strong>
+          </div>
+        )}
+
+        {step === 'method' && (
+          <>
+            <Field label="مدت اشتراک" required hint="مبلغ کل بر اساس مدت انتخابی محاسبه می‌شود.">
+              <Select value={String(months)} onChange={(e) => setMonths(Number(e.target.value))}>
+                {[1, 3, 6, 12].map((m) => (
+                  <option key={m} value={m}>{faDigits(m)} ماه</option>
+                ))}
+              </Select>
+            </Field>
+
+            {payError && (
+              <div role="alert" style={{ background: 'var(--danger-soft)', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
+                {payError}
+              </div>
+            )}
+
+            <p style={{ fontSize: 13, color: 'var(--text-2)', margin: '0 0 10px' }}>روش پرداخت را انتخاب کنید:</p>
+            <div style={{ display: 'grid', gap: 10 }}>
+              {onlineEnabled && (
+                <button type="button" className="pay-option" disabled={intentBusy !== null} onClick={() => void payOnline()}>
+                  <span className="pay-option__icon" aria-hidden="true">💳</span>
+                  <span>
+                    <span className="pay-option__title">پرداخت آنلاین</span>
+                    <span className="pay-option__desc">انتقال امن به درگاه زرین‌پال؛ فعال‌سازی بلافاصله پس از پرداخت</span>
+                  </span>
+                </button>
+              )}
+              {cardToCardEnabled && (
+                <button type="button" className="pay-option" disabled={intentBusy !== null} onClick={() => void payCardToCard()}>
+                  <span className="pay-option__icon" aria-hidden="true">🏦</span>
+                  <span>
+                    <span className="pay-option__title">کارت به کارت</span>
+                    <span className="pay-option__desc">واریز به کارت‌های سامانه و بارگذاری رسید؛ تأیید توسط مدیر</span>
+                  </span>
+                </button>
+              )}
+              {noMethodAvailable && (
+                <div style={{ background: 'var(--warning-soft)', color: 'var(--warning)', border: '1px solid var(--warning)', borderRadius: 10, padding: '10px 14px', fontSize: 13 }}>
+                  در حال حاضر هیچ روش پرداختی فعال نیست؛ لطفاً با پشتیبانی تماس بگیرید.
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <Button variant="ghost" onClick={closePayModal}>انصراف</Button>
+            </div>
+          </>
+        )}
+
+        {step === 'card' && intent && payPlan && (
+          <>
+            <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  background: 'var(--info-soft)',
+                  border: '1px solid #93c5fd',
+                  borderRadius: 10,
+                  padding: '10px 14px',
+                  fontSize: 13,
+                }}
+              >
+                <span>کد رهگیری پرداخت: <code dir="ltr" style={{ fontWeight: 700 }}>{intent.reference}</code></span>
+                <Button size="sm" variant="ghost" onClick={() => void copyText(intent.reference ?? '', 'کد رهگیری')}>
+                  کپی
+                </Button>
+              </div>
+
+              {modalCards.length === 0 ? (
+                <div style={{ background: 'var(--warning-soft)', color: 'var(--warning)', border: '1px solid var(--warning)', borderRadius: 10, padding: '10px 14px', fontSize: 13 }}>
+                  شماره کارتی برای واریز ثبت نشده است؛ لطفاً با پشتیبانی تماس بگیرید.
+                </div>
+              ) : (
+                modalCards.map((c) => (
+                  <div key={c.id} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', display: 'grid', gap: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: 14 }}>{c.bankName}</strong>
+                      <Button size="sm" variant="soft" onClick={() => void copyText(c.cardNumber.replace(/\D/g, ''), 'شماره کارت')}>
+                        کپی شماره کارت
+                      </Button>
+                    </div>
+                    <div dir="ltr" style={{ textAlign: 'left', fontFamily: 'monospace', fontSize: 17, fontWeight: 800, letterSpacing: 2 }}>
+                      {formatCardNumber(c.cardNumber)}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>به نام {c.holderName}</div>
+                  </div>
+                ))
+              )}
+
+              <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: 0 }}>
+                مبلغ <strong style={{ color: 'var(--text)' }}>{faMoney(payPlan.priceRial * months)}</strong> را واریز کنید، سپس فایل رسید را در همین
+                صفحه بارگذاری کنید تا مدیر آن را تأیید کند.
+              </p>
+            </div>
+
+            {payError && (
+              <div role="alert" style={{ background: 'var(--danger-soft)', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
+                {payError}
+              </div>
+            )}
+
+            <Field label="فایل رسید واریزی" required hint="JPG، PNG، WebP یا PDF · حداکثر ۵ مگابایت">
+              <div
+                className="attach-zone"
+                role="button"
+                tabIndex={0}
+                aria-label="انتخاب فایل رسید"
+                onClick={() => receiptInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    receiptInputRef.current?.click();
+                  }
+                }}
+              >
+                <span className="attach-zone__icon" aria-hidden="true">🧾</span>
+                <span>
+                  <span className="attach-zone__title">{receiptFile ? 'تغییر فایل رسید' : 'انتخاب فایل رسید'}</span>
+                  <span className="attach-zone__hint">تصویر یا PDF رسید کارت به کارت</span>
+                </span>
+              </div>
+            </Field>
+
+            {receiptFile && (
+              <div style={{ marginBottom: 12 }}>
+                <span className="file-chip">
+                  <span aria-hidden="true">{receiptFile.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+                  <span className="file-chip__name">{receiptFile.name}</span>
+                  <span className="file-chip__meta">{faFileSize(receiptFile.size)}</span>
+                  <button
+                    type="button"
+                    className="file-chip__remove"
+                    onClick={() => setReceiptFile(null)}
+                    aria-label={`حذف فایل ${receiptFile.name}`}
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+            )}
+
+            <input
+              ref={receiptInputRef}
+              type="file"
+              accept={RECEIPT_ACCEPT}
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                pickReceipt(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+              <Button onClick={() => void uploadReceipt()} loading={uploading} disabled={!receiptFile}>
+                بارگذاری رسید
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setStep('method');
+                  setIntent(null);
+                  setReceiptFile(null);
+                  setPayError('');
+                }}
+                disabled={uploading}
+              >
+                بازگشت
+              </Button>
+            </div>
+          </>
+        )}
+
+        {step === 'done' && (
+          <div style={{ textAlign: 'center', padding: '10px 0 4px' }}>
+            <div style={{ fontSize: 44, marginBottom: 8 }} aria-hidden="true">✅</div>
+            <h3 style={{ fontSize: 16.5, fontWeight: 800, marginBottom: 6 }}>رسید شما ثبت شد و در انتظار تأیید مدیر است</h3>
+            <p style={{ fontSize: 13.5, color: 'var(--text-2)', marginBottom: 18 }}>
+              پس از بررسی و تأیید رسید (معمولاً کمتر از یک ساعت کاری)، اشتراک شما فعال شده و اعلان آن را دریافت می‌کنید.
+            </p>
+            <Button onClick={closePayModal}>متوجه شدم</Button>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

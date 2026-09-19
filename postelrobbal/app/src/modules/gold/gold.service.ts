@@ -20,7 +20,7 @@ const DEFAULT_TEMPLATE =
   'دلار: {دلار}\n' +
   'طلای ۱۸ عیار: {طلای ۱۸ عیار}\n' +
   'سکه امامی: {سکه امامی}\n\n' +
-  ' توسط ربات پُستیار';
+  ' توسط ربات پُست‌یار';
 
 export interface GoldPrice {
   label: string;

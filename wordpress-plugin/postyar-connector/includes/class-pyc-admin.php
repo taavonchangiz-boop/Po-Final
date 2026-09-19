@@ -1,6 +1,6 @@
 <?php
 /**
- * Admin page «پُستیار»: connection form (merge-save), tools, status, diagnostics.
+ * Admin page «پُست‌یار»: connection form (merge-save), tools, status, diagnostics.
  *
  * Security model (fixes of reference weaknesses):
  *  - EVERY handler: current_user_can('manage_options') + nonce.
@@ -30,12 +30,12 @@ class PYC_Admin {
 	}
 
 	/**
-	 * Single top-level menu «پُستیار».
+	 * Single top-level menu «پُست‌یار».
 	 */
 	public function register_menu() {
 		add_menu_page(
-			'پُستیار',
-			'پُستیار',
+			'پُست‌یار',
+			'پُست‌یار',
 			'manage_options',
 			self::PAGE_SLUG,
 			array($this, 'render_page'),
@@ -124,8 +124,8 @@ class PYC_Admin {
 		$map        = is_array($opts['category_map']) ? $opts['category_map'] : array();
 		?>
 		<div class="wrap pyc-wrap" dir="rtl">
-			<h1 class="pyc-title"><span class="dashicons dashicons-megaphone"></span> پُستیار — اتصال ووکامرس</h1>
-			<p class="pyc-sub">محصولات فروشگاه شما به پُستیار ارسال می‌شوند تا در کانال‌های پیام‌رسان منتشر شوند. کلید و رمز اتصال را از داشبورد پُستیار (بخش ووکامرس) دریافت کنید.</p>
+			<h1 class="pyc-title"><span class="dashicons dashicons-megaphone"></span> پُست‌یار — اتصال ووکامرس</h1>
+			<p class="pyc-sub">محصولات فروشگاه شما به پُست‌یار ارسال می‌شوند تا در کانال‌های پیام‌رسان منتشر شوند. کلید و رمز اتصال را از داشبورد پُست‌یار (بخش ووکامرس) دریافت کنید.</p>
 
 			<div class="pyc-grid">
 
@@ -151,7 +151,7 @@ class PYC_Admin {
 						<?php wp_nonce_field('pyc_save_settings', 'pyc_nonce'); ?>
 
 						<p>
-							<label for="pyc_saas_url">آدرس پُستیار (آدرس پایهٔ داشبورد)</label>
+							<label for="pyc_saas_url">آدرس پُست‌یار (آدرس پایهٔ داشبورد)</label>
 							<input type="url" id="pyc_saas_url" name="pyc_saas_url" dir="ltr" class="regular-text"
 								value="<?php echo esc_attr($opts['saas_url']); ?>"
 								placeholder="https://app.example.com" autocomplete="off" />
@@ -163,7 +163,7 @@ class PYC_Admin {
 							<input type="text" id="pyc_site_key" name="pyc_site_key" dir="ltr" class="regular-text"
 								value="<?php echo esc_attr($opts['site_key']); ?>"
 								placeholder="۳۲ کاراکتر hex" autocomplete="off" maxlength="32" />
-							<span class="description">هنگام ثبت سایت در داشبورد پُستیار تولید می‌شود.</span>
+							<span class="description">هنگام ثبت سایت در داشبورد پُست‌یار تولید می‌شود.</span>
 						</p>
 
 						<p>
@@ -171,7 +171,7 @@ class PYC_Admin {
 							<input type="password" id="pyc_site_secret" name="pyc_site_secret" dir="ltr" class="regular-text"
 								value="" placeholder="برای تغییر مجدد وارد کنید" autocomplete="new-password" maxlength="32" />
 							<span class="description">
-								<?php echo esc_html('' !== $opts['site_secret'] ? 'یک secret ذخیره شده است و نمایش داده نمی‌شود؛ خالی بگذارید تا بدون تغییر بماند.' : 'secret را از داشبورد پُستیار وارد کنید (فقط یک‌بار نمایش داده می‌شود).'); ?>
+								<?php echo esc_html('' !== $opts['site_secret'] ? 'یک secret ذخیره شده است و نمایش داده نمی‌شود؛ خالی بگذارید تا بدون تغییر بماند.' : 'secret را از داشبورد پُست‌یار وارد کنید (فقط یک‌بار نمایش داده می‌شود).'); ?>
 								secret فقط داخل هدر ارسال می‌شود و هرگز در آدرس (URL) یا لاگ‌ها قرار نمی‌گیرد.
 							</span>
 						</p>
@@ -238,7 +238,7 @@ class PYC_Admin {
 						<li><span class="pyc-label">نسخهٔ وردپرس:</span> <?php echo esc_html($diag['wp_version']); ?></li>
 						<li><span class="pyc-label">ووکامرس:</span> <?php echo esc_html($diag['wc_active'] ? ('فعال' . ('' !== $diag['wc_version'] ? ' (نسخهٔ ' . $diag['wc_version'] . ')' : '')) : 'غیرفعال — این افزونه بدون ووکامرس کار نمی‌کند'); ?></li>
 						<li><span class="pyc-label">ارسال HTTP (wp_remote_post):</span> <?php echo esc_html($diag['http_ok'] ? 'موجود است' : 'در دسترس نیست'); ?></li>
-						<li><span class="pyc-label">آدرس پُستیار روی HTTPS:</span> <?php echo esc_html($diag['saas_https'] ? 'بله' : 'خیر — توصیه می‌شود آدرس https باشد'); ?></li>
+						<li><span class="pyc-label">آدرس پُست‌یار روی HTTPS:</span> <?php echo esc_html($diag['saas_https'] ? 'بله' : 'خیر — توصیه می‌شود آدرس https باشد'); ?></li>
 						<li><span class="pyc-label">site_key ذخیره شده:</span> <?php echo esc_html($diag['site_key_set'] ? 'بله' : 'خیر'); ?></li>
 						<li><span class="pyc-label">secret ذخیره شده:</span> <?php echo esc_html($diag['secret_set'] ? 'بله (نمایش داده نمی‌شود)' : 'خیر'); ?></li>
 						<li><span class="pyc-label">محصولات ثبت‌شده در لاگ محلی:</span> <?php echo esc_html(number_format_i18n($diag['logged_count'])); ?></li>
@@ -251,7 +251,7 @@ class PYC_Admin {
 					<h2>هشدار حذف افزونه</h2>
 					<p>
 						با حذف کامل افزونه، جدول لاگ محصولات، تمام تنظیمات (شامل site_key و secret) و همهٔ زمان‌بندی‌ها برای همیشه پاک می‌شوند و قابل بازگشت نیستند.
-						برای اتصال مجدد باید از داشبورد پُستیار یک اتصال تازه (یا rotate secret) بسازید. برای غیرفعال‌سازی موقت، فقط «غیرفعال کردن» را انتخاب کنید.
+						برای اتصال مجدد باید از داشبورد پُست‌یار یک اتصال تازه (یا rotate secret) بسازید. برای غیرفعال‌سازی موقت، فقط «غیرفعال کردن» را انتخاب کنید.
 					</p>
 				</section>
 
@@ -280,7 +280,7 @@ class PYC_Admin {
 		if (isset($_POST['pyc_saas_url'])) {
 			$url = PYC_Settings::sanitize_saas_url(wp_unslash($_POST['pyc_saas_url']));
 			if ('' === $url && '' !== trim((string) wp_unslash($_POST['pyc_saas_url']))) {
-				$errors[] = 'آدرس پُستیار معتبر نیست؛ فقط http و https پذیرفته می‌شود.';
+				$errors[] = 'آدرس پُست‌یار معتبر نیست؛ فقط http و https پذیرفته می‌شود.';
 			} else {
 				$next['saas_url'] = $url;
 			}

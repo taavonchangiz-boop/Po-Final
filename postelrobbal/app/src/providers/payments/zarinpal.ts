@@ -46,7 +46,12 @@ export class ZarinpalAdapter implements PaymentGatewayAdapter {
   constructor(private readonly merchantId: string, private readonly sandbox = false) {}
 
   async createPayment(input: CreatePaymentInput): Promise<CreatedPayment> {
-    if (!this.merchantId) throw new AppError(ERR.INTERNAL());
+    // Item-13 root-cause fix: an unconfigured merchant used to surface as a
+    // generic 500 INTERNAL_ERROR. Degrade gracefully with a stable, actionable
+    // Persian code so the frontend can fall back to card-to-card.
+    if (!this.merchantId || this.merchantId.trim() === '') {
+      throw new AppError(ERR.GATEWAY_NOT_CONFIGURED());
+    }
     const { data } = await httpJson<ZpResponse>(`${this.sandbox ? SANDBOX_BASE : BASE}/request.json`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },

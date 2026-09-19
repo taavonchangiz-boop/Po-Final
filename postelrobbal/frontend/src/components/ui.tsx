@@ -1,4 +1,4 @@
-import { type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes, type TextareaHTMLAttributes, type SelectHTMLAttributes, useEffect, useRef } from 'react';
+import { type ReactNode, type ButtonHTMLAttributes, type CSSProperties, type InputHTMLAttributes, type TextareaHTMLAttributes, type SelectHTMLAttributes, useEffect, useRef } from 'react';
 import { faDigits } from '../lib/format';
 
 export function Button({ variant = 'primary', size, block, loading, children, className = '', ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -19,8 +19,8 @@ export function Button({ variant = 'primary', size, block, loading, children, cl
   );
 }
 
-export function Card({ children, className = '', pad }: { children: ReactNode; className?: string; pad?: 'lg' }) {
-  return <div className={`card${pad === 'lg' ? ' card-pad-lg' : ''} ${className}`}>{children}</div>;
+export function Card({ children, className = '', pad, style }: { children: ReactNode; className?: string; pad?: 'lg'; style?: CSSProperties }) {
+  return <div className={`card${pad === 'lg' ? ' card-pad-lg' : ''} ${className}`} style={style}>{children}</div>;
 }
 
 export function Field({ label, error, hint, children, required }: { label: string; error?: string; hint?: string; children: ReactNode; required?: boolean }) {

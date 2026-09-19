@@ -90,6 +90,15 @@ export function faRelative(input: string | number | Date | null | undefined): st
   return fmt(Math.round(months / 12), 'سال');
 }
 
+/** Human file size with Persian digits: ۲٫۴ مگابایت (§44 single formatter). */
+export function faFileSize(bytes: number | null | undefined): string {
+  const b = Number(bytes ?? 0);
+  if (!Number.isFinite(b) || b <= 0) return `${faDigits(0)} بایت`;
+  if (b >= 1024 * 1024) return `${faDigits((b / (1024 * 1024)).toFixed(1))} مگابایت`;
+  if (b >= 1024) return `${faDigits(Math.round(b / 1024))} کیلوبایت`;
+  return `${faDigits(b)} بایت`;
+}
+
 /** Percentage with Persian digits. */
 export function faPercent(value: number | null | undefined, fractionDigits = 0): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';

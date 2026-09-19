@@ -1,6 +1,6 @@
 import { and, count, desc, eq } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { tickets, ticketMessages } from '../../db/schema.js';
+import { tickets, ticketMessages, ticketMessageAttachments } from '../../db/schema.js';
 import { AppError, ERR } from '../../core/errors.js';
 import { newId } from '../../core/ids.js';
 
@@ -72,12 +72,44 @@ export async function createTicket(
   return { id };
 }
 
+export interface TicketAttachmentDto {
+  id: string;
+  fileName: string;
+  size: number;
+  mime: string;
+  url: string;
+}
+
+export interface TicketMessageDto {
+  id: string;
+  authorRole: string;
+  authorId: string | null;
+  body: string;
+  createdAt: Date;
+  attachment: TicketAttachmentDto | null;
+}
+
+function attachmentDto(row: {
+  mediaId: string;
+  fileName: string;
+  sizeBytes: number | string;
+  mime: string;
+}): TicketAttachmentDto {
+  return {
+    id: row.mediaId,
+    fileName: row.fileName,
+    size: Number(row.sizeBytes),
+    mime: row.mime,
+    url: `/api/v1/media/${row.mediaId}`,
+  };
+}
+
 /** Ownership enforced here; support roles may open any ticket. */
 export async function getTicket(
   tenantId: string,
   ticketId: string,
   isSupport: boolean
-): Promise<{ ticket: TicketListItem; messages: Array<{ id: string; authorRole: string; authorId: string | null; body: string; createdAt: Date }> }> {
+): Promise<{ ticket: TicketListItem; messages: TicketMessageDto[] }> {
   const db = getDb();
   const where = isSupport ? eq(tickets.id, ticketId) : and(eq(tickets.id, ticketId), eq(tickets.tenantId, tenantId));
   const [ticket] = await db.select().from(tickets).where(where).limit(1);
@@ -91,8 +123,13 @@ export async function getTicket(
       authorId: ticketMessages.authorId,
       body: ticketMessages.body,
       createdAt: ticketMessages.createdAt,
+      attMediaId: ticketMessageAttachments.mediaId,
+      attFileName: ticketMessageAttachments.fileName,
+      attSizeBytes: ticketMessageAttachments.sizeBytes,
+      attMime: ticketMessageAttachments.mime,
     })
     .from(ticketMessages)
+    .leftJoin(ticketMessageAttachments, eq(ticketMessageAttachments.messageId, ticketMessages.id))
     .where(eq(ticketMessages.ticketId, ticket.id))
     .orderBy(ticketMessages.createdAt)
     .limit(200);
@@ -106,20 +143,34 @@ export async function getTicket(
       createdAt: ticket.createdAt,
       updatedAt: ticket.updatedAt,
     },
-    messages,
+    messages: messages.map((m) => ({
+      id: m.id,
+      authorRole: m.authorRole,
+      authorId: m.authorId,
+      body: m.body,
+      createdAt: m.createdAt,
+      attachment:
+        m.attMediaId && m.attFileName && m.attMime !== null
+          ? attachmentDto({ mediaId: m.attMediaId, fileName: m.attFileName, sizeBytes: m.attSizeBytes ?? 0, mime: m.attMime })
+          : null,
+    })),
   };
 }
 
 /**
  * Role-aware reply (§145): USER reply reopens the ticket (OPEN);
  * SUPPORT/SUPER_ADMIN reply marks it ANSWERED.
+ * Optional attachment (contract 14-contract item 7): media is uploaded by the
+ * route via media.service; the attachment row is written in the same
+ * transaction as the message (one attachment per message — uq_tatt_message).
  */
 export async function addTicketMessage(
   tenantId: string,
   ticketId: string,
   author: { id: string; role: ActorRole },
-  body: string
-): Promise<{ state: TicketState }> {
+  body: string,
+  attachment?: { mediaId: string; fileName: string; sizeBytes: number; mime: string }
+): Promise<{ state: TicketState; message: TicketMessageDto }> {
   const db = getDb();
   const isSupport = author.role !== 'USER';
   const where = isSupport ? eq(tickets.id, ticketId) : and(eq(tickets.id, ticketId), eq(tickets.tenantId, tenantId));
@@ -130,17 +181,45 @@ export async function addTicketMessage(
   }
 
   const nextState: TicketState = isSupport ? 'ANSWERED' : 'OPEN';
+  const messageId = newId();
   await db.transaction(async (tx) => {
     await tx.insert(ticketMessages).values({
-      id: newId(),
+      id: messageId,
       ticketId: ticket.id,
       authorId: author.id,
       authorRole: author.role,
       body: body.trim().slice(0, 5000),
     });
+    if (attachment) {
+      await tx.insert(ticketMessageAttachments).values({
+        id: newId(),
+        messageId,
+        mediaId: attachment.mediaId,
+        fileName: attachment.fileName.slice(0, 255),
+        sizeBytes: attachment.sizeBytes,
+        mime: attachment.mime,
+      });
+    }
     await tx.update(tickets).set({ state: nextState }).where(eq(tickets.id, ticket.id));
   });
-  return { state: nextState };
+
+  const message: TicketMessageDto = {
+    id: messageId,
+    authorRole: author.role,
+    authorId: author.id,
+    body: body.trim().slice(0, 5000),
+    createdAt: new Date(),
+    attachment: attachment
+      ? {
+          id: attachment.mediaId,
+          fileName: attachment.fileName.slice(0, 255),
+          size: attachment.sizeBytes,
+          mime: attachment.mime,
+          url: `/api/v1/media/${attachment.mediaId}`,
+        }
+      : null,
+  };
+  return { state: nextState, message };
 }
 
 export async function closeTicket(

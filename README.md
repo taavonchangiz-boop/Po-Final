@@ -1,6 +1,6 @@
-# Postyar (پُستیار)
+# Postyar (پُست‌یار)
 
-**Postyar** is a Persian-language, multi-channel post publishing SaaS ("پُستیار" — literally *post assistant*). Tenants connect Telegram / Bale / Rubika channels and bots, then author, schedule, and automatically deliver posts; a no-code bot builder handles commands, keywords, and workflow auto-replies; optional modules add an AI caption writer, a gold/coin price ticker, and WooCommerce product publishing through the official WordPress connector. Subscriptions, a wallet, points, and referrals are built in; the entire product UI is Persian (RTL) — this repo's engineering docs are in English.
+**Postyar** is a Persian-language, multi-channel post publishing SaaS ("پُست‌یار" — literally *post assistant*). Tenants connect Telegram / Bale / Rubika channels and bots, then author, schedule, and automatically deliver posts; a no-code bot builder handles commands, keywords, and workflow auto-replies; optional modules add an AI caption writer, a gold/coin price ticker, and WooCommerce product publishing through the official WordPress connector. Subscriptions, a wallet, points, and referrals are built in; the entire product UI is Persian (RTL) — this repo's engineering docs are in English.
 
 Independent SaaS rebuild from frozen read-only reference audits (`audits/`). Version **1.0.0**.
 

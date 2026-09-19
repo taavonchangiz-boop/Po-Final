@@ -90,6 +90,14 @@ export const ERR = {
     E('PAYMENT_VERIFY_FAILED', 'تأیید پرداخت ناموفق بود. اگر مبلغ کسر شده باشد به‌صورت خودکار بازگردانده می‌شود.', 400, 'Permanent'),
   WALLET_INSUFFICIENT: () =>
     E('WALLET_INSUFFICIENT', 'موجودی کیف پول کافی نیست.', 400, 'Validation'),
+
+  // payment methods (0003 review flow)
+  PAYMENT_METHOD_DISABLED: () =>
+    E('PAYMENT_METHOD_DISABLED', 'این روش پرداخت در حال حاضر غیرفعال است. لطفاً روش پرداخت دیگری را انتخاب کنید.', 403, 'Permanent'),
+  GATEWAY_NOT_CONFIGURED: () =>
+    E('GATEWAY_NOT_CONFIGURED', 'درگاه پرداخت آنلاین هنوز پیکربندی نشده است. لطفاً از روش پرداخت کارت به کارت استفاده کنید یا بعداً تلاش کنید.', 400, 'Permanent'),
+  PAYMENT_RECEIPT_INVALID: (msg?: string) =>
+    E('PAYMENT_RECEIPT_INVALID', msg ?? 'رسید بارگذاری‌شده معتبر نیست. تصویر (JPG، PNG، WebP) یا PDF با حداکثر حجم ۵ مگابایت ارسال کنید.', 422, 'Validation'),
 } as const;
 
 export function toPublicError(err: unknown): AppError {

@@ -86,7 +86,7 @@ export default function Referrals() {
       <div style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: 21, fontWeight: 800 }}>زیرمجموعه‌گیری</h1>
         <p style={{ color: 'var(--text-2)', fontSize: 13.5 }}>
-          با معرفی پُستیار به دوستان، {faDigits(100)} امتیاز به‌ازای هر کاربر جدید بگیرید؛ هر امتیاز ۱ تومان ارزش دارد.
+          با معرفی پُست‌یار به دوستان، {faDigits(100)} امتیاز به‌ازای هر کاربر جدید بگیرید؛ هر امتیاز ۱ تومان ارزش دارد.
         </p>
       </div>
 

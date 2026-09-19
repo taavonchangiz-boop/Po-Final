@@ -227,7 +227,7 @@ export default function Settings() {
       <Card pad="lg" className="danger-zone">
         <h3 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 700, color: 'var(--danger)' }}>حذف حساب</h3>
         <p style={{ fontSize: 13, color: 'var(--text-2)', margin: '0 0 14px', lineHeight: 2 }}>
-          با حذف حساب، دسترسی شما به پُستیار غیرفعال و اطلاعات شناسایی شما ناشناس‌سازی می‌شود. این عمل قابل بازگشت نیست.
+          با حذف حساب، دسترسی شما به پُست‌یار غیرفعال و اطلاعات شناسایی شما ناشناس‌سازی می‌شود. این عمل قابل بازگشت نیست.
         </p>
         <Button variant="danger" onClick={() => { setDeletePhrase(''); setDeleteOpen(true); }}>
           حذف حساب کاربری

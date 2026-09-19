@@ -135,7 +135,7 @@ export default function Ai() {
     <div>
       <div style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: 21, fontWeight: 800 }}>هوش مصنوعی</h1>
-        <p style={{ color: 'var(--text-2)', fontSize: 13.5 }}>کپشن‌های آمادهٔ انتشار با کمک دستیار هوشمند پُستیار.</p>
+        <p style={{ color: 'var(--text-2)', fontSize: 13.5 }}>کپشن‌های آمادهٔ انتشار با کمک دستیار هوشمند پُست‌یار.</p>
       </div>
 
       {!usageLoading && (

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Postyar Connector
  * Plugin URI:        https://postyar.app
- * Description:       اتصال فروشگاه ووکامرس به پُستیار — همگام‌سازی خودکار محصولات برای انتشار در کانال‌ها.
+ * Description:       اتصال فروشگاه ووکامرس به پُست‌یار — همگام‌سازی خودکار محصولات برای انتشار در کانال‌ها.
  * Version:           1.0.0
  * Author:            Postyar
  * Author URI:        https://postyar.app
@@ -25,7 +25,7 @@
  * افزونه دادهٔ محصولات را با wp_remote_post به {saas_url}/api/v1/webhooks/wordpress
  * می‌فرستد و اعتبارنامه (site_key + secret) فقط و فقط داخل هدرهای
  * x-postyar-site-key و x-postyar-secret قرار می‌گیرد — هرگز در URL یا کوئری‌استرینگ.
- * سرور پُستیار SHA-256 هدر secret را به‌صورت timing-safe با hash ذخیره‌شده مقایسه می‌کند.
+ * سرور پُست‌یار SHA-256 هدر secret را به‌صورت timing-safe با hash ذخیره‌شده مقایسه می‌کند.
  */
 
 defined('ABSPATH') || exit;

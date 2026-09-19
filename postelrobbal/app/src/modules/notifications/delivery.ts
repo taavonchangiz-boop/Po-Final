@@ -55,7 +55,7 @@ export async function createExpiryWarning(subscription: {
   const db = getDb();
   const [user] = await db.select().from(users).where(eq(users.id, subscription.tenantId)).limit(1);
   const title = 'اشتراک شما به‌زودی منقضی می‌شود';
-  const body = `اشتراک شما در پُستیار تا تاریخ انقضا به پایان می‌رسد. برای جلوگیری از وقفه در سرویس، اشتراک خود را تمدید کنید.`;
+  const body = `اشتراک شما در پُست‌یار تا تاریخ انقضا به پایان می‌رسد. برای جلوگیری از وقفه در سرویس، اشتراک خود را تمدید کنید.`;
   const destinations: Array<'INAPP' | 'TELEGRAM' | 'BALE' | 'RUBIKA'> = ['INAPP'];
 
   await notifyTenant({ tenantId: subscription.tenantId, kind: 'SUBSCRIPTION_EXPIRY_7D', titleFa: title, bodyFa: body });

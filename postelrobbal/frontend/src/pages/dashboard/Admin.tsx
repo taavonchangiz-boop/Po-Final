@@ -23,7 +23,29 @@ const PAYMENT_STATE_FA: Record<string, string> = {
   FAILED: 'ناموفق',
   CANCELLED: 'لغوشده',
   REFUNDED: 'بازگشت‌شده',
+  PENDING_REVIEW: 'در انتظار تأیید رسید',
 };
+
+const PROVIDER_FA: Record<string, string> = {
+  zarinpal: 'زرین‌پال',
+};
+
+/** Top-level payment keys of GET/PUT /api/v1/admin/settings (contract 14-contract item 2).
+ *  They are native JSON (bool/string/array), so they never go through the generic
+ *  object-valued JSON editor — the dedicated «تنظیمات پرداخت» card owns them. */
+const PAYMENT_SETTING_KEYS: ReadonlySet<string> = new Set([
+  'paymentOnlineEnabled',
+  'paymentCardToCardEnabled',
+  'paymentProvider',
+  'cardToCardCards',
+]);
+
+interface PayCardRow {
+  id?: string;
+  bankName: string;
+  cardNumber: string;
+  holderName: string;
+}
 
 const SETTINGS_KEY_FA: Record<string, string> = {
   referral: 'تنظیمات زیرمجموعه‌گیری',
@@ -107,6 +129,20 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function normalizeCardNumber(raw: string): string {
+  return raw.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[\s-]/g, '');
+}
+
+/** iOS-like switch (theme.css .switch). */
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <label className="switch">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} aria-label={label} />
+      <span className="switch__track" aria-hidden="true" />
+    </label>
+  );
+}
+
 export default function Admin() {
   const { me } = useAuth();
   const toast = useToast();
@@ -139,6 +175,9 @@ export default function Admin() {
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [approveId, setApproveId] = useState<string | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
+  const [rejectId, setRejectId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectBusy, setRejectBusy] = useState(false);
 
   // settings
   const [settings, setSettings] = useState<SettingsMap | null>(null);
@@ -147,13 +186,24 @@ export default function Admin() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [newKey, setNewKey] = useState('');
 
+  // payment gateway settings (contract 14-contract item 2)
+  const [payOnline, setPayOnline] = useState(false);
+  const [payCardEnabled, setPayCardEnabled] = useState(false);
+  const [payProvider, setPayProvider] = useState('zarinpal');
+  const [payCards, setPayCards] = useState<PayCardRow[]>([]);
+  const [payCardErrors, setPayCardErrors] = useState<Record<number, string>>({});
+
   // audit
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditPage, setAuditPage] = useState(1);
   const [auditLoading, setAuditLoading] = useState(false);
 
-  const isAdmin = me?.user.role === 'SUPER_ADMIN' || me?.user.role === 'SUPPORT';
+  // Admin gating (deliverable 5): page-level role check on the session user
+  // role from /api/v1/auth/me. SUPER_ADMIN/ADMIN/SUPPORT reach the panel;
+  // everyone else gets the access-denied state. Layout.tsx (14-a) filters the
+  // nav item separately.
+  const isAdmin = me?.user.role === 'SUPER_ADMIN' || me?.user.role === 'ADMIN' || me?.user.role === 'SUPPORT';
 
   const loadOverview = useCallback(async () => {
     setOverviewLoading(true);
@@ -185,7 +235,8 @@ export default function Admin() {
   const loadPayments = useCallback(async (p: number, state: string) => {
     setPaymentsLoading(true);
     try {
-      const q = state ? `&state=${encodeURIComponent(state)}` : '';
+      // "status" per contract 14-contract item 5 (e.g. status=PENDING_REVIEW).
+      const q = state ? `&status=${encodeURIComponent(state)}` : '';
       const d = await api.get<{ items?: AdminPaymentRow[]; total?: number; page?: number }>(`/api/v1/admin/payments?page=${p}${q}`);
       setPayments(d.items ?? []);
       setPaymentsTotal(Number(d.total ?? 0));
@@ -204,6 +255,23 @@ export default function Admin() {
       const map = asObject(d);
       setSettings(map);
       setSettingsDraft(Object.keys(map).map((k) => JSON.stringify(asObject(map[k]), null, 2)));
+      // Payment keys are native JSON at the top level (contract item 2).
+      setPayOnline(map.paymentOnlineEnabled === true);
+      setPayCardEnabled(map.paymentCardToCardEnabled === true);
+      setPayProvider(typeof map.paymentProvider === 'string' && map.paymentProvider ? map.paymentProvider : 'zarinpal');
+      const cardsRaw = Array.isArray(map.cardToCardCards) ? map.cardToCardCards : [];
+      setPayCards(
+        cardsRaw.slice(0, 5).map((c) => {
+          const o = asObject(c);
+          return {
+            id: typeof o.id === 'string' ? o.id : undefined,
+            bankName: typeof o.bankName === 'string' ? o.bankName : '',
+            cardNumber: typeof o.cardNumber === 'string' ? o.cardNumber : '',
+            holderName: typeof o.holderName === 'string' ? o.holderName : '',
+          };
+        })
+      );
+      setPayCardErrors({});
     } catch (err) {
       toast.error(err instanceof ApiRequestError ? err.message : 'دریافت تنظیمات ناموفق بود.');
     } finally {
@@ -288,7 +356,7 @@ export default function Admin() {
     if (!approveId) return;
     setApproveBusy(true);
     try {
-      await api.post(`/api/v1/admin/payments/${approveId}/approve`);
+      await api.post(`/api/v1/admin/payments/${approveId}/approve`, {});
       toast.success('پرداخت تأیید و اعمال شد.');
       setApproveId(null);
       await loadPayments(paymentsPage, stateFilter);
@@ -299,11 +367,34 @@ export default function Admin() {
     }
   };
 
+  const rejectPayment = async () => {
+    if (!rejectId) return;
+    const reason = rejectReason.trim();
+    if (reason.length < 3) {
+      toast.error('دلیل رد را بنویسید (حداقل ۳ نویسه).');
+      return;
+    }
+    setRejectBusy(true);
+    try {
+      await api.post(`/api/v1/admin/payments/${rejectId}/reject`, { reason });
+      toast.success('پرداخت رد شد.');
+      setRejectId(null);
+      setRejectReason('');
+      await loadPayments(paymentsPage, stateFilter);
+    } catch (err) {
+      toast.error(err instanceof ApiRequestError ? err.message : 'رد پرداخت ناموفق بود.');
+    } finally {
+      setRejectBusy(false);
+    }
+  };
+
   const saveSettings = async () => {
     if (!settings) return;
     const payload: Record<string, unknown> = {};
     const keys = Object.keys(settings);
     for (let i = 0; i < keys.length; i += 1) {
+      // Payment keys are saved from the dedicated card below, not as JSON objects.
+      if (PAYMENT_SETTING_KEYS.has(keys[i])) continue;
       try {
         const parsed = JSON.parse(settingsDraft[i] ?? '{}') as unknown;
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -316,6 +407,37 @@ export default function Admin() {
         return;
       }
     }
+
+    // Payment gateway payload (contract item 2) — validated client-side.
+    if (payCardEnabled && payCards.length === 0) {
+      toast.error('برای فعال‌سازی کارت به کارت، حداقل یک شماره کارت اضافه کنید.');
+      return;
+    }
+    const cardErrors: Record<number, string> = {};
+    payCards.forEach((c, i) => {
+      if (!c.bankName.trim()) cardErrors[i] = 'نام بانک را وارد کنید.';
+      else if (!c.holderName.trim()) cardErrors[i] = 'نام صاحب کارت را وارد کنید.';
+      else if (!/^\d{16,24}$/.test(normalizeCardNumber(c.cardNumber))) cardErrors[i] = 'شماره کارت باید ۱۶ تا ۲۴ رقم عددی باشد.';
+    });
+    if (Object.keys(cardErrors).length > 0) {
+      setPayCardErrors(cardErrors);
+      toast.error('اطلاعات کارت‌ها را بررسی و اصلاح کنید.');
+      return;
+    }
+    setPayCardErrors({});
+
+    payload.paymentOnlineEnabled = payOnline;
+    payload.paymentCardToCardEnabled = payCardEnabled;
+    payload.paymentProvider = payProvider;
+    if (payCards.length > 0) {
+      payload.cardToCardCards = payCards.map((c) => ({
+        id: c.id,
+        bankName: c.bankName.trim(),
+        cardNumber: normalizeCardNumber(c.cardNumber),
+        holderName: c.holderName.trim(),
+      }));
+    }
+
     setSettingsSaving(true);
     try {
       await api.put('/api/v1/admin/settings', payload);
@@ -487,9 +609,14 @@ export default function Admin() {
                         <td dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{p.userEmail || (p.tenantId ? p.tenantId.slice(0, 10) : '—')}</td>
                         <td>{faDateTime(p.createdAt)}</td>
                         <td>
-                          {p.state === 'CREATED' && (
-                            <Button size="sm" variant="soft" onClick={() => setApproveId(p.id)}>تأیید دستی</Button>
-                          )}
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {(p.state === 'CREATED' || p.state === 'PENDING_REVIEW') && (
+                              <Button size="sm" variant="soft" onClick={() => setApproveId(p.id)}>تأیید</Button>
+                            )}
+                            {p.state === 'PENDING_REVIEW' && (
+                              <Button size="sm" variant="ghost" onClick={() => { setRejectId(p.id); setRejectReason(''); }}>رد رسید</Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -506,27 +633,109 @@ export default function Admin() {
     if (tab === 'settings') {
       if (settingsLoading || settings === null) return <PageLoading />;
       const keys = Object.keys(settings);
+      // Payment keys have their own dedicated editor card below (contract item 2).
+      const editableKeys = keys.filter((k) => !PAYMENT_SETTING_KEYS.has(k));
+      const updateCard = (i: number, patch: Partial<PayCardRow>) => {
+        setPayCards(payCards.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+        if (payCardErrors[i]) {
+          const next = { ...payCardErrors };
+          delete next[i];
+          setPayCardErrors(next);
+        }
+      };
       return (
         <div style={{ display: 'grid', gap: 14, maxWidth: 780 }}>
           <p style={{ fontSize: 13, color: 'var(--text-2)' }}>
-            مقادیر هر کلید باید یک شیء JSON معتبر باشد. تغییرات پس از ذخیره برای همهٔ کاربران اعمال می‌شود.
+            تنظیمات پرداخت در کارت «تنظیمات پرداخت» مدیریت می‌شود؛ سایر کلیدها مقادیر شیء JSON دارند و پس از ذخیره برای همهٔ کاربران اعمال می‌شوند.
           </p>
-          {keys.map((key, i) => (
-            <Card key={key}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: 14 }}>{SETTINGS_KEY_FA[key] ?? `تنظیمات (${key})`}</strong>
-                <code dir="ltr" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{key}</code>
+
+          <Card>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 14 }}>تنظیمات پرداخت</strong>
+              <code dir="ltr" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>payment</code>
+            </div>
+
+            <div style={{ display: 'grid', gap: 14, marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>پرداخت آنلاین</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                    کاربران به درگاه {PROVIDER_FA[payProvider] ?? payProvider} هدایت می‌شوند.
+                  </div>
+                </div>
+                <Toggle checked={payOnline} onChange={setPayOnline} label="فعال‌سازی پرداخت آنلاین" />
               </div>
-              <Textarea
-                dir="ltr"
-                rows={6}
-                style={{ fontFamily: 'monospace', fontSize: 12.5, textAlign: 'left' }}
-                value={settingsDraft[i] ?? ''}
-                onChange={(e) => setSettingsDraft(settingsDraft.map((d, j) => (j === i ? e.target.value : d)))}
-                aria-label={`مقدار JSON کلید ${key}`}
-              />
-            </Card>
-          ))}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>کارت به کارت</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                    کاربر رسید واریز را بارگذاری می‌کند و مدیر آن را تأیید می‌کند.
+                  </div>
+                </div>
+                <Toggle checked={payCardEnabled} onChange={setPayCardEnabled} label="فعال‌سازی کارت به کارت" />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              <strong style={{ fontSize: 13.5 }}>کارت‌های دریافت واریز ({faDigits(payCards.length)} از {faDigits(5)})</strong>
+              <Button
+                size="sm"
+                variant="soft"
+                disabled={payCards.length >= 5}
+                onClick={() => setPayCards([...payCards, { bankName: '', cardNumber: '', holderName: '' }])}
+              >
+                + افزودن کارت
+              </Button>
+            </div>
+
+            {payCards.length === 0 ? (
+              <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: '0 0 8px' }}>
+                کارتی ثبت نشده است. برای فعال‌سازی کارت به کارت، حداقل یک کارت اضافه کنید.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {payCards.map((c, i) => (
+                  <div key={c.id ?? `new-${i}`} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', display: 'grid', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <div style={{ flex: 1, minWidth: 130 }}>
+                        <Input value={c.bankName} onChange={(e) => updateCard(i, { bankName: e.target.value })} placeholder="نام بانک (مثلاً ملت)" aria-label={`نام بانک کارت ${faDigits(i + 1)}`} error={Boolean(payCardErrors[i])} />
+                      </div>
+                      <div style={{ flex: 1.4, minWidth: 180 }}>
+                        <Input dir="ltr" style={{ textAlign: 'left', fontFamily: 'monospace' }} value={c.cardNumber} onChange={(e) => updateCard(i, { cardNumber: e.target.value })} placeholder="6037997512345678" aria-label={`شماره کارت ${faDigits(i + 1)}`} error={Boolean(payCardErrors[i])} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 130 }}>
+                        <Input value={c.holderName} onChange={(e) => updateCard(i, { holderName: e.target.value })} placeholder="نام صاحب کارت" aria-label={`نام صاحب کارت ${faDigits(i + 1)}`} error={Boolean(payCardErrors[i])} />
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => setPayCards(payCards.filter((_, j) => j !== i))} aria-label={`حذف کارت ${faDigits(i + 1)}`}>
+                        حذف
+                      </Button>
+                    </div>
+                    {payCardErrors[i] && <div className="field-error" role="alert">{payCardErrors[i]}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {editableKeys.map((key) => {
+            const i = keys.indexOf(key);
+            return (
+              <Card key={key}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: 14 }}>{SETTINGS_KEY_FA[key] ?? `تنظیمات (${key})`}</strong>
+                  <code dir="ltr" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{key}</code>
+                </div>
+                <Textarea
+                  dir="ltr"
+                  rows={6}
+                  style={{ fontFamily: 'monospace', fontSize: 12.5, textAlign: 'left' }}
+                  value={settingsDraft[i] ?? ''}
+                  onChange={(e) => setSettingsDraft(settingsDraft.map((d, j) => (j === i ? e.target.value : d)))}
+                  aria-label={`مقدار JSON کلید ${key}`}
+                />
+              </Card>
+            );
+          })}
 
           <Card>
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -537,7 +746,7 @@ export default function Admin() {
               </div>
               <Button variant="ghost" onClick={addSettingKey}>افزودن کلید</Button>
             </div>
-            <Button onClick={() => void saveSettings()} loading={settingsSaving} disabled={keys.length === 0}>ذخیرهٔ تنظیمات</Button>
+            <Button onClick={() => void saveSettings()} loading={settingsSaving}>ذخیرهٔ تنظیمات</Button>
           </Card>
         </div>
       );
@@ -637,11 +846,26 @@ export default function Admin() {
         open={Boolean(approveId)}
         onClose={() => setApproveId(null)}
         onConfirm={() => void approvePayment()}
-        title="تأیید دستی پرداخت"
+        title="تأیید پرداخت"
         message={`تأیید پرداخت ${faMoney(approveTarget?.amountRial)} باعث فعال‌سازی اشتراک یا شارژ کیف پول کاربر می‌شود. ادامه می‌دهید؟`}
         danger
         busy={approveBusy}
       />
+
+      <Modal open={Boolean(rejectId)} onClose={() => setRejectId(null)} title="رد رسید پرداخت">
+        <p style={{ fontSize: 13.5, color: 'var(--text-2)', marginBottom: 14 }}>
+          دلیل رد برای کاربر ارسال می‌شود؛ پس از رد، پرداخت قابل بررسی مجدد نیست.
+        </p>
+        <Field label="دلیل رد" required hint="مثلاً: مبلغ رسید با فاکتور مطابقت ندارد یا تصویر ناخوانا است.">
+          <Textarea rows={3} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="دلیل رد رسید…" />
+        </Field>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Button variant="danger" loading={rejectBusy} disabled={rejectReason.trim().length < 3} onClick={() => void rejectPayment()}>
+            رد پرداخت
+          </Button>
+          <Button variant="ghost" onClick={() => setRejectId(null)}>انصراف</Button>
+        </div>
+      </Modal>
     </div>
   );
 }

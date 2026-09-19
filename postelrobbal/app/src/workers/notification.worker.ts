@@ -85,8 +85,8 @@ async function handlePasswordReset(job: Job): Promise<void> {
   const resetUrl = `${env.APP_URL}/reset-password?token=${token}`;
   const result = await sendEmail({
     to: email,
-    subject: 'بازیابی رمز عبور پُستیار',
-    text: `سلام,\n\nبرای بازیابی رمز عبور خود در پُستیار، روی لینک زیر کلیک کنید (اعتبار: ۳۰ دقیقه):\n${resetUrl}\n\nاگر این درخواست را شما انجام نداده‌اید، این پیام را نادیده بگیرید.`,
+    subject: 'بازیابی رمز عبور پُست‌یار',
+    text: `سلام,\n\nبرای بازیابی رمز عبور خود در پُست‌یار، روی لینک زیر کلیک کنید (اعتبار: ۳۰ دقیقه):\n${resetUrl}\n\nاگر این درخواست را شما انجام نداده‌اید، این پیام را نادیده بگیرید.`,
   });
 
   if (!result.ok) {

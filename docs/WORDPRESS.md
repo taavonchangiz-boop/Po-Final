@@ -1,6 +1,6 @@
 # Postyar × WordPress — Connector Protocol (v1)
 
-این سند قرارداد اتصال ووکامرس/وردپرس به پُستیار را مشخص می‌کند (ماژول: `src/modules/wordpress`).
+این سند قرارداد اتصال ووکامرس/وردپرس به پُست‌یار را مشخص می‌کند (ماژول: `src/modules/wordpress`).
 
 ## 1. احراز هویت وب‌هوک (Authentication mode)
 
@@ -17,7 +17,7 @@
 
 > نکته: هدرها را فقط روی HTTPS بفرستید. فعال‌سازی بدون پلن دارای feature `woocommerce` با خطای `FORBIDDEN` رد می‌شود.
 
-## 2. Endpoints سمت پُستیار
+## 2. Endpoints سمت پُست‌یار
 
 ### احراز هویت‌شده (session cookie + CSRF)
 

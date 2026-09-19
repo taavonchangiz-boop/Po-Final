@@ -1,10 +1,15 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { AppError, ERR } from '../../core/errors.js';
 import {
-  uploadMedia, listMedia, deleteMedia, createMediaAccessToken, resolveMediaByToken, openMediaStream,
+  uploadMedia, listMedia, deleteMedia, createMediaAccessToken, resolveMediaByToken, openMediaStream, getMediaForViewer,
 } from './media.service.js';
 
 const ulidish = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+
+function authUser(req: FastifyRequest): { id: string; role: 'SUPER_ADMIN' | 'SUPPORT' | 'USER' } {
+  if (!req.user) throw new AppError(ERR.AUTH_REQUIRED());
+  return { id: req.user.id, role: req.user.role };
+}
 
 function parsePagination(query: unknown): { page: number; pageSize: number } {
   const raw = (query ?? {}) as Record<string, unknown>;
@@ -50,6 +55,19 @@ export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
     const { page, pageSize } = parsePagination(req.query);
     const result = await listMedia(tenantId, page, pageSize);
     return { success: true, data: result };
+  });
+
+  // Authorized download (contract 14-contract item 7): serves receipts and
+  // ticket attachments to their owner, to support staff, and to ticket
+  // participants — ownership rules live in media.service.getMediaForViewer.
+  app.get('/media/:id', { preHandler: app.requireAuth }, async (req, reply) => {
+    const viewer = authUser(req);
+    const id = mustUlidParam(req, 'id');
+    const row = await getMediaForViewer(viewer, id);
+    void reply.header('content-type', row.mime);
+    void reply.header('content-length', Number(row.sizeBytes));
+    void reply.header('cache-control', 'private, max-age=60');
+    return reply.send(openMediaStream(row));
   });
 
   app.delete('/media/:id', { preHandler: app.requireAuth }, async (req) => {

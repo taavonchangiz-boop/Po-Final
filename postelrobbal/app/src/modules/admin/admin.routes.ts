@@ -11,14 +11,17 @@ import {
   grantSubscription,
   listAdminPayments,
   approvePayment,
+  rejectPayment,
   listAuditLogs,
   listPlans,
   updatePlan,
   getSettings,
   putSettings,
+  getPaymentState,
   broadcast,
   releaseChannel,
 } from './admin.service.js';
+import { putPaymentSettings, PAYMENT_SETTING_KEYS } from '../payments/payment-settings.service.js';
 
 function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
   return parseWith(schema, body);
@@ -53,6 +56,21 @@ const planPatchSchema = z.object({
 const settingsSchema = z
   .record(z.unknown())
   .refine((r) => Object.keys(r).length > 0, { message: 'بدنهٔ تنظیمات خالی است.' });
+
+// Payment gateway settings (contract 14-contract item 2). cardToCardCards is
+// validated strictly: 1..5 cards, cardNumber 16..24 digits, non-empty names.
+const paymentCardSchema = z.object({
+  id: z.string().min(1).max(40).optional(),
+  bankName: z.string().min(1).max(80),
+  cardNumber: z.string().regex(/^\d{16,24}$/),
+  holderName: z.string().min(1).max(80),
+});
+const approvePaymentSchema = z.object({
+  note: z.string().min(1).max(500).optional(),
+});
+const rejectPaymentSchema = z.object({
+  reason: z.string().min(3).max(500),
+});
 const broadcastSchema = z.object({
   titleFa: z.string().min(2).max(190),
   bodyFa: z.string().min(2).max(5000),
@@ -120,15 +138,44 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get('/admin/payments', access, async (req) => {
     const q = (req.query ?? {}) as Record<string, string | undefined>;
     const { page, pageSize } = paging(q);
-    const data = await listAdminPayments(q.state, page, pageSize);
+    // "status" per contract; legacy callers may still send "state".
+    const data = await listAdminPayments(q.status ?? q.state, page, pageSize);
     return { success: true, data };
   });
 
   app.post('/admin/payments/:id/approve', paymentsReview, async (req) => {
     const me = auth(req);
     const id = paramId(req);
-    const data = await approvePayment(me.id, id);
-    await audit({ action: 'admin.payment_approved', actorId: me.id, actorRole: me.role, subjectType: 'payment', subjectId: id, ip: req.ip });
+    const input = parse(approvePaymentSchema, (req.body ?? {}) as unknown);
+    const before = await getPaymentState(id);
+    const data = await approvePayment(me.id, id, input.note);
+    await audit({
+      action: 'admin.payment_approved',
+      actorId: me.id,
+      actorRole: me.role,
+      subjectType: 'payment',
+      subjectId: id,
+      ip: req.ip,
+      meta: { previousState: before, note: input.note ?? null },
+    });
+    return { success: true, data };
+  });
+
+  app.post('/admin/payments/:id/reject', paymentsReview, async (req) => {
+    const me = auth(req);
+    const id = paramId(req);
+    const input = parse(rejectPaymentSchema, req.body);
+    const before = await getPaymentState(id);
+    const data = await rejectPayment(me.id, id, input.reason);
+    await audit({
+      action: 'admin.payment_rejected',
+      actorId: me.id,
+      actorRole: me.role,
+      subjectType: 'payment',
+      subjectId: id,
+      ip: req.ip,
+      meta: { previousState: before, reason: input.reason.slice(0, 200) },
+    });
     return { success: true, data };
   });
 
@@ -171,14 +218,55 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
   app.put('/admin/settings', settingsManage, async (req) => {
     const me = auth(req);
-    const input = parse(settingsSchema, req.body);
-    const updated = await putSettings(input as Record<string, unknown>);
+    const input = parse(settingsSchema, req.body) as Record<string, unknown>;
+
+    // Split payment-gateway keys from the generic object-valued settings.
+    // Non-conforming payment payloads (e.g. the legacy admin page round-trips
+    // every key as {}) are skipped harmlessly; conforming payloads validate
+    // strictly via zod and persist.
+    const paymentRaw: Record<string, unknown> = {};
+    const generic: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(input)) {
+      if ((PAYMENT_SETTING_KEYS as readonly string[]).includes(k)) paymentRaw[k] = v;
+      else generic[k] = v;
+    }
+
+    let updated = 0;
+    const updatedKeys: string[] = [];
+    if (Object.keys(paymentRaw).length > 0) {
+      const patch = paymentRaw as {
+        paymentOnlineEnabled?: unknown;
+        paymentCardToCardEnabled?: unknown;
+        paymentProvider?: unknown;
+        cardToCardCards?: unknown;
+      };
+      const coerced: {
+        paymentOnlineEnabled?: boolean;
+        paymentCardToCardEnabled?: boolean;
+        paymentProvider?: 'zarinpal';
+        cardToCardCards?: Array<{ id?: string; bankName: string; cardNumber: string; holderName: string }>;
+      } = {};
+      if (typeof patch.paymentOnlineEnabled === 'boolean') coerced.paymentOnlineEnabled = patch.paymentOnlineEnabled;
+      if (typeof patch.paymentCardToCardEnabled === 'boolean') coerced.paymentCardToCardEnabled = patch.paymentCardToCardEnabled;
+      if (patch.paymentProvider === 'zarinpal') coerced.paymentProvider = 'zarinpal';
+      if (Array.isArray(patch.cardToCardCards)) coerced.cardToCardCards = parse(paymentCardSchema.array().min(1).max(5), patch.cardToCardCards);
+      if (Object.keys(coerced).length > 0) {
+        const keys = await putPaymentSettings(coerced);
+        updated += keys.length;
+        updatedKeys.push(...keys);
+      }
+    }
+    if (Object.keys(generic).length > 0) {
+      updated += await putSettings(generic);
+      updatedKeys.push(...Object.keys(generic));
+    }
+
     await audit({
       action: 'admin.settings_updated',
       actorId: me.id,
       actorRole: me.role,
       ip: req.ip,
-      meta: { keys: updated },
+      meta: { keys: updatedKeys },
     });
     return { success: true, data: { updated } };
   });

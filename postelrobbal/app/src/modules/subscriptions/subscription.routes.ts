@@ -1,8 +1,8 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { asc, eq, count } from 'drizzle-orm';
+import { asc, eq, count, countDistinct, gte } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { plans, aiUsageMonthly, posts, channels, bots } from '../../db/schema.js';
+import { plans, aiUsageMonthly, posts, channels, bots, postTargets } from '../../db/schema.js';
 import { AppError, ERR } from '../../core/errors.js';
 import { and, ne, sql } from 'drizzle-orm';
 import { getPlanContext } from './plan.service.js';
@@ -42,6 +42,75 @@ export async function registerSubscriptionRoutes(app: FastifyInstance): Promise<
       .where(eq(plans.isActive, 1))
       .orderBy(asc(plans.sortOrder));
     return { success: true, data: { plans: rows } };
+  });
+
+  // Contract 14-contract item 6: current subscription + plan + server-computed
+  // usage for the (re)built Subscription page.
+  //   postsSent      → DISTINCT posts with ≥1 SENT delivery (post_targets
+  //                    state='SENT', sent_at within the subscription period;
+  //                    all-time when no subscription). "Delivered posts" — the
+  //                    countable, honest state, unlike created-post counts.
+  //   botsActive / channelsActive → tenant row counts. The schema has no
+  //                    soft-delete marker (disconnect = status DISABLED, row
+  //                    kept), matching §118 quota counting in plan.service.
+  //   daysRemaining  → ceil((expiresAt − now)/day), 0 without a subscription.
+  //   limits         → plan.limitsJson (max_posts / max_bots / max_channels);
+  //                    0 means unlimited (documented product semantics).
+  app.get('/subscriptions/current', { preHandler: [app.requireAuth] }, async (req) => {
+    const me = auth(req);
+    const tenantId = me.id;
+    const ctx = await getPlanContext(tenantId);
+    const db = getDb();
+
+    const [planRow] = await db
+      .select({ priceRial: plans.priceRial, periodDays: plans.periodDays })
+      .from(plans)
+      .where(eq(plans.id, ctx.planId))
+      .limit(1);
+
+    const sentConds = ctx.startedAt
+      ? and(eq(postTargets.tenantId, tenantId), eq(postTargets.state, 'SENT'), gte(postTargets.sentAt, ctx.startedAt))
+      : and(eq(postTargets.tenantId, tenantId), eq(postTargets.state, 'SENT'));
+    const [postsRow] = await db
+      .select({ value: countDistinct(postTargets.postId) })
+      .from(postTargets)
+      .where(sentConds);
+    const [channelsRow] = await db.select({ value: count() }).from(channels).where(eq(channels.tenantId, tenantId));
+    const [botsRow] = await db.select({ value: count() }).from(bots).where(eq(bots.tenantId, tenantId));
+
+    const daysRemaining = ctx.expiresAt
+      ? Math.max(0, Math.ceil((ctx.expiresAt.getTime() - Date.now()) / 86_400_000))
+      : 0;
+
+    return {
+      success: true,
+      data: {
+        subscription:
+          ctx.subscriptionId && ctx.state === 'ACTIVE'
+            ? { id: ctx.subscriptionId, state: ctx.state, startedAt: ctx.startedAt, expiresAt: ctx.expiresAt }
+            : null,
+        plan: {
+          id: ctx.planId,
+          code: ctx.planCode,
+          nameFa: ctx.planNameFa,
+          priceRial: Number(planRow?.priceRial ?? 0),
+          periodDays: Number(planRow?.periodDays ?? 30),
+          limits: ctx.limits,
+          features: ctx.features,
+        },
+        usage: {
+          daysRemaining,
+          postsSent: Number(postsRow?.value ?? 0),
+          botsActive: Number(botsRow?.value ?? 0),
+          channelsActive: Number(channelsRow?.value ?? 0),
+          limits: {
+            postsPerMonth: ctx.limits.max_posts,
+            bots: ctx.limits.max_bots,
+            channels: ctx.limits.max_channels,
+          },
+        },
+      },
+    };
   });
 
   // Current subscription + plan + limits + live usage summary

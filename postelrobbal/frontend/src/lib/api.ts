@@ -75,6 +75,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
+  /** Multipart upload (support attachments, payment receipts). The browser
+   *  sets the multipart boundary header; never set content-type manually. */
+  postForm: <T>(path: string, formData: FormData) => request<T>(path, { method: 'POST', formData }),
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };

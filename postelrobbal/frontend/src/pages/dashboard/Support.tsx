@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiRequestError } from '../../lib/api';
 import { Button, Card, ConfirmDialog, EmptyState, Field, Input, Modal, PageLoading, Pagination, Select, StatusBadge, Textarea } from '../../components/ui';
-import { TICKET_STATE_FA, faDateTime, faRelative } from '../../lib/format';
+import { TICKET_STATE_FA, faDateTime, faFileSize, faRelative } from '../../lib/format';
 import { useToast } from '../../lib/toast';
 
 const CATEGORY_FA: Record<string, string> = {
@@ -28,12 +28,34 @@ interface TicketRow {
   updatedAt?: string | null;
 }
 
+interface TicketAttachment {
+  id: string;
+  fileName: string;
+  size: number;
+  mime: string;
+  url: string;
+}
+
 interface TicketMessage {
   id: string;
   authorRole?: string | null;
   authorId?: string | null;
   body?: string | null;
   createdAt?: string | null;
+  attachment?: TicketAttachment | null;
+}
+
+/** Contract 14-contract item 7: multipart "file" — images/PDF ≤10MB. */
+const ATTACH_MIME_ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
+const ATTACH_ACCEPT = '.jpg,.jpeg,.png,.webp,.pdf';
+
+function PaperclipIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
 }
 
 export default function Support() {
@@ -60,6 +82,27 @@ export default function Support() {
   const [closeOpen, setCloseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Attachment upload (contract 14-contract item 7)
+  const [attachFile, setAttachFile] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
+
+  const pickAttach = useCallback(
+    (file: File | null | undefined) => {
+      if (!file) return;
+      if (!ATTACH_MIME_ALLOWED.has(file.type)) {
+        toast.error('فرمت فایل مجاز نیست. تصویر (JPG، PNG، WebP) یا PDF انتخاب کنید.');
+        return;
+      }
+      if (file.size > ATTACH_MAX_BYTES) {
+        toast.error('حجم فایل باید حداکثر ۱۰ مگابایت باشد.');
+        return;
+      }
+      setAttachFile(file);
+    },
+    [toast]
+  );
+
   const load = useCallback(async (p: number) => {
     setLoading(true);
     try {
@@ -83,6 +126,8 @@ export default function Support() {
     setDetailId(id);
     setDetailLoading(true);
     setReply('');
+    setAttachFile(null);
+    setDragOver(false);
     try {
       const d = await api.get<{ ticket?: TicketRow; messages?: TicketMessage[] }>(`/api/v1/support/tickets/${id}`);
       setDetailTicket(d.ticket ?? null);
@@ -130,8 +175,13 @@ export default function Support() {
     if (!detailId || !reply.trim()) return;
     setReplying(true);
     try {
-      await api.post(`/api/v1/support/tickets/${detailId}/messages`, { body: reply.trim() });
+      // Multipart per contract item 7: "body" text + optional "file".
+      const fd = new FormData();
+      fd.append('body', reply.trim());
+      if (attachFile) fd.append('file', attachFile);
+      await api.postForm(`/api/v1/support/tickets/${detailId}/messages`, fd);
       setReply('');
+      setAttachFile(null);
       await refreshDetail(detailId);
       toast.success('پاسخ شما ثبت شد.');
     } catch (err) {
@@ -262,6 +312,38 @@ export default function Support() {
                         <span>{faDateTime(m.createdAt)}</span>
                       </div>
                       <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{m.body}</div>
+                      {m.attachment && (
+                        <a
+                          className="msg-attach"
+                          href={m.attachment.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="مشاهده پیوست (تب جدید)"
+                        >
+                          {m.attachment.mime === 'application/pdf' ? (
+                            <span className="msg-attach__pdficon" aria-hidden="true">PDF</span>
+                          ) : (
+                            <img src={m.attachment.url} alt={m.attachment.fileName} loading="lazy" />
+                          )}
+                          <span style={{ minWidth: 0 }}>
+                            <span
+                              style={{
+                                display: 'block',
+                                fontWeight: 700,
+                                maxWidth: 170,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {m.attachment.fileName}
+                            </span>
+                            <span style={{ display: 'block', fontSize: 11, color: 'var(--text-2)' }}>
+                              {faFileSize(m.attachment.size)} — کلیک و مشاهده
+                            </span>
+                          </span>
+                        </a>
+                      )}
                     </div>
                   );
                 })
@@ -271,9 +353,77 @@ export default function Support() {
             {(detailTicket?.state ?? '') !== 'CLOSED' && (
               <>
                 <Field label="پاسخ شما">
+                  <div
+                    className={`attach-zone${dragOver ? ' is-dragover' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="افزودن پیوست: فایل را بکشید و رها کنید یا کلیک کنید"
+                    onClick={() => attachInputRef.current?.click()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        attachInputRef.current?.click();
+                      }
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOver(true);
+                    }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOver(false);
+                      pickAttach(e.dataTransfer.files?.[0]);
+                    }}
+                  >
+                    <span className="attach-zone__icon" aria-hidden="true">
+                      <PaperclipIcon />
+                    </span>
+                    <span>
+                      <span className="attach-zone__title">فایل را بکشید و اینجا رها کنید یا کلیک کنید</span>
+                      <span className="attach-zone__hint">JPG، PNG، WebP یا PDF · حداکثر ۱۰ مگابایت</span>
+                    </span>
+                  </div>
+                  <div style={{ height: 10 }} aria-hidden="true" />
                   <Textarea rows={3} value={reply} onChange={(e) => setReply(e.target.value)} placeholder="پاسخ یا توضیح تکمیلی…" />
                 </Field>
-                <Button onClick={() => void sendReply()} loading={replying} disabled={!reply.trim()}>ارسال پاسخ</Button>
+
+                {attachFile && (
+                  <div style={{ marginBottom: 12 }}>
+                    <span className="file-chip">
+                      <span aria-hidden="true">{attachFile.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+                      <span className="file-chip__name">{attachFile.name}</span>
+                      <span className="file-chip__meta">{faFileSize(attachFile.size)}</span>
+                      <button
+                        type="button"
+                        className="file-chip__remove"
+                        onClick={() => setAttachFile(null)}
+                        aria-label={`حذف پیوست ${attachFile.name}`}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <Button onClick={() => void sendReply()} loading={replying} disabled={!reply.trim()}>
+                    ارسال پاسخ
+                  </Button>
+                  <Button variant="ghost" onClick={() => attachInputRef.current?.click()}>
+                    <PaperclipIcon /> پیوست فایل
+                  </Button>
+                </div>
+                <input
+                  ref={attachInputRef}
+                  type="file"
+                  accept={ATTACH_ACCEPT}
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    pickAttach(e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                />
               </>
             )}
           </>

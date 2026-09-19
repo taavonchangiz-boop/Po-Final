@@ -22,6 +22,7 @@ const PAYMENT_STATE_FA: Record<string, string> = {
   FAILED: 'ناموفق',
   CANCELLED: 'لغوشده',
   REFUNDED: 'بازگشت‌شده',
+  PENDING_REVIEW: 'در انتظار تأیید رسید',
 };
 
 const PURPOSE_FA: Record<string, string> = {

@@ -1,4 +1,4 @@
-import { and, desc, eq, count } from 'drizzle-orm';
+import { and, desc, eq, count, or } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { payments, plans, referrals, referralRewards } from '../../db/schema.js';
 import { AppError, ERR } from '../../core/errors.js';
@@ -11,6 +11,7 @@ import { ZarinpalAdapter } from '../../providers/payments/zarinpal.js';
 import { activateSubscriptionTx } from '../subscriptions/plan.service.js';
 import type { Tx } from '../subscriptions/plan.service.js';
 import { moveMoneyTx, pointCreditTx } from '../wallet/wallet.service.js';
+import { getPaymentSettings } from './payment-settings.service.js';
 
 export const POINT_TO_RIAL = 10; // ۱ امتیاز = ۱۰ ریال
 const WALLET_TOPUP_MIN = 100_000; // Rial
@@ -86,8 +87,133 @@ export async function createSubscriptionPayment(
     planId: plan.id,
     months,
     amountRial,
-    description: 'خرید اشتراک پُستیار',
+    description: 'خرید اشتراک پُست‌یار',
   });
+}
+
+// ---------------------------------------------------------------------------
+// Payment intents (contract 14-contract item 3): one entry point for the two
+// payment methods. Online reuses the existing Zarinpal path unchanged;
+// card_to_card creates a PENDING_REVIEW payment reviewed by an admin.
+// ---------------------------------------------------------------------------
+
+export interface SubscriptionIntentInput {
+  planId: string;
+  method: 'online' | 'card_to_card';
+  months?: number;
+}
+
+export type SubscriptionIntentResult =
+  | { paymentId: string; redirectUrl: string }
+  | { paymentId: string; reference: string; cards: Array<{ id: string; bankName: string; cardNumber: string; holderName: string }> };
+
+/** Accepts a plan id (ULID) or, for convenience, its unique code. */
+async function findActivePlan(planIdOrCode: string) {
+  const db = getDb();
+  const [plan] = await db
+    .select()
+    .from(plans)
+    .where(and(eq(plans.isActive, 1), or(eq(plans.id, planIdOrCode), eq(plans.code, planIdOrCode))))
+    .limit(1);
+  return plan ?? null;
+}
+
+export async function createSubscriptionIntent(
+  tenantId: string,
+  input: SubscriptionIntentInput
+): Promise<SubscriptionIntentResult> {
+  const settings = await getPaymentSettings();
+  if (input.method === 'online' && !settings.onlineEnabled) {
+    throw new AppError(ERR.PAYMENT_METHOD_DISABLED());
+  }
+  if (input.method === 'card_to_card' && !settings.cardToCardEnabled) {
+    throw new AppError(ERR.PAYMENT_METHOD_DISABLED());
+  }
+
+  const months = input.months ?? 1;
+  const plan = await findActivePlan(input.planId);
+  if (!plan) throw new AppError(ERR.NOT_FOUND('پلن'));
+  const amountRial = Number(plan.priceRial) * months;
+  if (amountRial <= 0) throw new AppError(ERR.VALIDATION('این پلن رایگان است و نیازی به پرداخت ندارد.'));
+
+  if (input.method === 'online') {
+    // Graceful degradation when the gateway is unconfigured (sandbox path).
+    // The adapter enforces the same guard — this early check avoids any IO.
+    const env = loadEnv();
+    if (!env.PAYMENT_MERCHANT_ID || env.PAYMENT_MERCHANT_ID.trim() === '') {
+      throw new AppError(ERR.GATEWAY_NOT_CONFIGURED());
+    }
+    const result = await createSubscriptionPayment(tenantId, plan.code, months);
+    return { paymentId: result.paymentId, redirectUrl: result.redirectUrl };
+  }
+
+  // card_to_card: no gateway involved — always works.
+  const db = getDb();
+  const id = newId();
+  const reference = newId();
+  await db.insert(payments).values({
+    id,
+    tenantId,
+    purpose: 'SUBSCRIPTION',
+    planId: plan.id,
+    months,
+    amountRial,
+    gateway: 'card_to_card',
+    reference,
+    state: 'PENDING_REVIEW',
+    metaJson: { method: 'card_to_card', reference },
+  });
+  await emitEvent({
+    name: 'payment.created',
+    tenantId,
+    subjectType: 'payment',
+    subjectId: id,
+    props: { purpose: 'SUBSCRIPTION', amountRial, method: 'card_to_card' },
+  });
+  return { paymentId: id, reference, cards: settings.cards };
+}
+
+export interface ReceiptUpload {
+  mediaId: string;
+  note?: string | null;
+}
+
+/**
+ * Attaches the uploaded receipt to a PENDING_REVIEW card-to-card payment.
+ * Ownership: the payment must belong to the session tenant (missing or
+ * foreign payments are indistinguishable 404s — §180 no existence leak).
+ * Idempotency: a second upload is rejected (the first receipt stands until
+ * an admin reviews it).
+ */
+export async function attachReceipt(
+  tenantId: string,
+  paymentId: string,
+  upload: ReceiptUpload
+): Promise<{ paymentId: string; status: 'PENDING_REVIEW' }> {
+  const db = getDb();
+  const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+  if (!payment || payment.tenantId !== tenantId) throw new AppError(ERR.NOT_FOUND('پرداخت'));
+  if (payment.receiptMediaId) {
+    throw new AppError(ERR.CONFLICT('رسید این پرداخت قبلاً بارگذاری شده است و قابل تغییر نیست.'));
+  }
+  if (payment.state !== 'PENDING_REVIEW') {
+    throw new AppError(ERR.CONFLICT('این پرداخت در مرحلهٔ انتظار رسید نیست.'));
+  }
+
+  const metaJson: Record<string, unknown> = { ...(payment.metaJson ?? {}) };
+  if (upload.note && upload.note.trim() !== '') metaJson.receiptNote = upload.note.trim().slice(0, 500);
+
+  const res = await db
+    .update(payments)
+    .set({ receiptMediaId: upload.mediaId, receiptNote: upload.note?.trim().slice(0, 500) || null, metaJson })
+    .where(and(eq(payments.id, payment.id), eq(payments.state, 'PENDING_REVIEW')));
+  const changed = Array.isArray(res) ? Number(res[0]?.affectedRows ?? 0) : Number((res as { affectedRows?: number })?.affectedRows ?? 0);
+  if (changed === 0) {
+    throw new AppError(ERR.CONFLICT('رسید این پرداخت قبلاً بارگذاری شده است و قابل تغییر نیست.'));
+  }
+
+  await audit({ action: 'payment.receipt_uploaded', actorId: tenantId, subjectType: 'payment', subjectId: payment.id });
+  return { paymentId: payment.id, status: 'PENDING_REVIEW' };
 }
 
 /** Wallet top-up payment (§34). */
@@ -101,7 +227,7 @@ export async function createWalletTopup(tenantId: string, amountRial: number): P
     planId: null,
     months: 1,
     amountRial,
-    description: 'شارژ کیف پول پُستیار',
+    description: 'شارژ کیف پول پُست‌یار',
   });
 }
 

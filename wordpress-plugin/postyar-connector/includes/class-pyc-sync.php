@@ -297,7 +297,7 @@ class PYC_Sync {
 			return new WP_Error('pyc_wc_missing', 'ووکامرس فعال نیست؛ همگام‌سازی امکان‌پذیر نیست.');
 		}
 		if (!PYC_Settings::is_configured()) {
-			return new WP_Error('pyc_not_configured', 'تنظیمات اتصال کامل نیست؛ آدرس پُستیار، site_key و secret را ذخیره کنید.');
+			return new WP_Error('pyc_not_configured', 'تنظیمات اتصال کامل نیست؛ آدرس پُست‌یار، site_key و secret را ذخیره کنید.');
 		}
 
 		$ids = array_values(array_unique(array_filter(array_map('absint', $wc_ids))));
@@ -400,7 +400,7 @@ class PYC_Sync {
 	public static function send_request(array $body) {
 		$opts = PYC_Settings::all();
 		if ('' === $opts['saas_url'] || '' === $opts['site_key'] || '' === $opts['site_secret']) {
-			return new WP_Error('pyc_not_configured', 'تنظیمات اتصال کامل نیست؛ آدرس پُستیار، site_key و secret را ذخیره کنید.');
+			return new WP_Error('pyc_not_configured', 'تنظیمات اتصال کامل نیست؛ آدرس پُست‌یار، site_key و secret را ذخیره کنید.');
 		}
 
 		$url  = untrailingslashit($opts['saas_url']) . PYC_WEBHOOK_PATH;
@@ -419,7 +419,7 @@ class PYC_Sync {
 
 		$response = wp_remote_post($url, $args);
 		if (is_wp_error($response)) {
-			return new WP_Error('pyc_http_failed', 'ارتباط با سرور پُستیار برقرار نشد. (' . $response->get_error_message() . ')');
+			return new WP_Error('pyc_http_failed', 'ارتباط با سرور پُست‌یار برقرار نشد. (' . $response->get_error_message() . ')');
 		}
 
 		$raw  = wp_remote_retrieve_body($response);
@@ -447,19 +447,19 @@ class PYC_Sync {
 		}
 
 		if (401 === $code) {
-			return new WP_Error('pyc_unauthorized', 'اعتبارنامهٔ سایت معتبر نیست؛ site_key یا secret را بررسی کنید. در صورت افشای secret، از داشبورد پُستیار rotate بگیرید.');
+			return new WP_Error('pyc_unauthorized', 'اعتبارنامهٔ سایت معتبر نیست؛ site_key یا secret را بررسی کنید. در صورت افشای secret، از داشبورد پُست‌یار rotate بگیرید.');
 		}
 		if (429 === $code) {
-			return new WP_Error('pyc_rate_limited', 'محدودیت نرخ درخواست در سرور پُستیار؛ دوباره تلاش خواهد شد.' . $detail);
+			return new WP_Error('pyc_rate_limited', 'محدودیت نرخ درخواست در سرور پُست‌یار؛ دوباره تلاش خواهد شد.' . $detail);
 		}
 		if (403 === $code) {
-			return new WP_Error('pyc_forbidden', 'سرور پُستیار این عملیات را مجاز ندانست (مثلاً سهمیهٔ پلن).' . $detail);
+			return new WP_Error('pyc_forbidden', 'سرور پُست‌یار این عملیات را مجاز ندانست (مثلاً سهمیهٔ پلن).' . $detail);
 		}
 		if (422 === $code) {
 			return new WP_Error('pyc_validation', 'داده‌های محصول ارسالی پذیرفته نشد.' . $detail);
 		}
 
-		return new WP_Error('pyc_http_' . (int) $code, 'پاسخ ناموفق از سرور پُستیار (کد ' . (int) $code . ').' . $detail);
+		return new WP_Error('pyc_http_' . (int) $code, 'پاسخ ناموفق از سرور پُست‌یار (کد ' . (int) $code . ').' . $detail);
 	}
 
 	/**
@@ -479,13 +479,13 @@ class PYC_Sync {
 		if (200 === $res['code']) {
 			return array(
 				'ok'      => true,
-				'message' => 'اتصال به پُستیار برقرار است.',
+				'message' => 'اتصال به پُست‌یار برقرار است.',
 			);
 		}
 		if (422 === $res['code']) {
 			return array(
 				'ok'      => true,
-				'message' => 'اتصال به پُستیار برقرار است (اعتبارنامه در هدرها تأیید شد).',
+				'message' => 'اتصال به پُست‌یار برقرار است (اعتبارنامه در هدرها تأیید شد).',
 			);
 		}
 

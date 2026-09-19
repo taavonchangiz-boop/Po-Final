@@ -47,7 +47,7 @@ class PYC_Ajax {
 		$this->guard();
 
 		if (!PYC_Settings::is_configured()) {
-			wp_send_json_error(array('message' => 'ابتدا آدرس پُستیار، site_key و secret را ذخیره کنید.'));
+			wp_send_json_error(array('message' => 'ابتدا آدرس پُست‌یار، site_key و secret را ذخیره کنید.'));
 		}
 
 		$res = PYC_Sync::test_connection();
@@ -69,7 +69,7 @@ class PYC_Ajax {
 			wp_send_json_error(array('message' => 'ووکامرس فعال نیست؛ همگام‌سازی امکان‌پذیر نیست.'));
 		}
 		if (!PYC_Settings::is_configured()) {
-			wp_send_json_error(array('message' => 'تنظیمات اتصال کامل نیست؛ آدرس پُستیار، site_key و secret را ذخیره کنید.'));
+			wp_send_json_error(array('message' => 'تنظیمات اتصال کامل نیست؛ آدرس پُست‌یار، site_key و secret را ذخیره کنید.'));
 		}
 
 		$page = isset($_POST['page']) ? absint(wp_unslash($_POST['page'])) : 0;

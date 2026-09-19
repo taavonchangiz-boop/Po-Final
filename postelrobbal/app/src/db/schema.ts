@@ -396,14 +396,21 @@ export const payments = mysqlTable('payments', {
   gateway: varchar('gateway', { length: 40 }).notNull(),
   gatewayRef: varchar('gateway_ref', { length: 190 }),
   authority: varchar('authority', { length: 190 }),
-  state: mysqlEnum('state', ['CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'CANCELLED', 'REFUNDED']).notNull().default('CREATED'),
+  reference: char('reference', { length: 26 }),
+  state: mysqlEnum('state', ['CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'CANCELLED', 'REFUNDED', 'PENDING_REVIEW', 'REJECTED', 'COMPLETED']).notNull().default('CREATED'),
   verifiedAt: datetime('verified_at'),
   metaJson: json('meta_json').$type<Record<string, unknown>>(),
+  receiptMediaId: char('receipt_media_id', { length: 26 }),
+  receiptNote: varchar('receipt_note', { length: 500 }),
+  reviewedBy: char('reviewed_by', { length: 26 }),
+  reviewedAt: datetime('reviewed_at'),
   createdAt: ts(),
   updatedAt: datetime('updated_at').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
 }, (t) => [
   unique('uq_payments_authority').on(t.gateway, t.authority),
+  unique('uq_payments_reference').on(t.reference),
   index('idx_payments_tenant').on(t.tenantId, t.state),
+  index('idx_payments_state_created').on(t.state, t.createdAt),
 ]);
 
 export const walletAccounts = mysqlTable('wallet_accounts', {
@@ -541,6 +548,20 @@ export const ticketMessages = mysqlTable('ticket_messages', {
   body: text('body').notNull(),
   createdAt: ts(),
 }, (t) => [index('idx_tmsg_ticket').on(t.ticketId, t.createdAt)]);
+
+/** One attachment per ticket message (0003, uq_tatt_message). */
+export const ticketMessageAttachments = mysqlTable('ticket_message_attachments', {
+  id: char('id', { length: 26 }).primaryKey(),
+  messageId: char('message_id', { length: 26 }).notNull(),
+  mediaId: char('media_id', { length: 26 }).notNull(),
+  fileName: varchar('file_name', { length: 255 }).notNull(),
+  sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+  mime: varchar('mime', { length: 120 }).notNull(),
+  createdAt: ts(),
+}, (t) => [
+  unique('uq_tatt_message').on(t.messageId),
+  index('idx_tatt_media').on(t.mediaId),
+]);
 
 export const systemSettings = mysqlTable('system_settings', {
   settingKey: varchar('setting_key', { length: 80 }).primaryKey(),

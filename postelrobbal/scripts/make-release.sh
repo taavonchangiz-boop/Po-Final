@@ -43,9 +43,10 @@ log "Staging tree (excluding .git, node_modules, .env*, logs, private, coverage,
 rsync -a \
   --exclude '.git/' \
   --exclude 'node_modules/' \
+  --include '.env.example' \
+  --include '.env.example/' \
   --exclude '.env' \
   --exclude '.env.*' \
-  --exclude '!.env.example' \
   --exclude '*.log' \
   --exclude 'dev.log' \
   --exclude 'private/' \
@@ -62,9 +63,10 @@ rsync -a \
   --exclude 'Thumbs.db' \
   --exclude '.DS_Store' \
   "${ROOT}/" "${STAGE}/"
-# --exclude '!.env.example' is a no-op for rsync; ensure the template ships:
-if [ -f "${ROOT}/.env.example" ] && [ ! -f "${STAGE}/.env.example" ]; then
-  cp "${ROOT}/.env.example" "${STAGE}/.env.example"
+# Safety net: the annotated env template must ship with the release.
+if [ -f "${ROOT}/postelrobbal/config/.env.example" ] && [ ! -f "${STAGE}/postelrobbal/config/.env.example" ]; then
+  mkdir -p "${STAGE}/postelrobbal/config"
+  cp "${ROOT}/postelrobbal/config/.env.example" "${STAGE}/postelrobbal/config/.env.example"
 fi
 ok "Staged into ${STAGE}"
 

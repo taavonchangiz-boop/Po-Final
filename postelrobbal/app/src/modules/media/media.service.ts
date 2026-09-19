@@ -3,11 +3,12 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { media, mediaAccessTokens } from '../../db/schema.js';
+import { media, mediaAccessTokens, ticketMessageAttachments, ticketMessages, tickets } from '../../db/schema.js';
 import { newId, newToken, sha256Hex } from '../../core/ids.js';
 import { AppError, ERR } from '../../core/errors.js';
 import { audit } from '../../core/audit.js';
 import { loadEnv } from '../../config/env.js';
+import { roleHasPermission } from '../../security/permissions.js';
 
 /**
  * Media storage (§60 path-traversal safe): filenames are server-generated
@@ -22,6 +23,7 @@ const MIME_EXT: Record<string, string> = {
   'image/webp': 'webp',
   'image/gif': 'gif',
   'video/mp4': 'mp4',
+  'application/pdf': 'pdf',
 };
 
 export function storageRoot(): string {
@@ -50,6 +52,8 @@ export function magicMatches(mime: string, buf: Buffer): boolean {
       return hexAt(0, 4) === '52494646' && hexAt(8, 4) === '57454250'; // RIFF....WEBP
     case 'video/mp4':
       return buf.toString('latin1', 4, 8) === 'ftyp'; // box type at offset 4
+    case 'application/pdf':
+      return buf.toString('latin1', 0, 5) === '%PDF-'; // version header
     default:
       return false;
   }
@@ -98,17 +102,23 @@ function safeAbsolutePath(storagePath: string): string {
 
 export async function uploadMedia(
   tenantId: string,
-  input: { buffer: Buffer; mimeType: string }
+  input: { buffer: Buffer; mimeType: string; maxBytes?: number }
 ): Promise<MediaPublic> {
+  // Default cap stays at the historical 8MB for the generic media library;
+  // callers may pass a tighter (receipts: 5MB) or looser (ticket attachments:
+  // 10MB, matching the multipart stream cap) limit explicitly.
+  const maxBytes = input.maxBytes ?? MAX_MEDIA_BYTES;
+  const mbFa = String(Math.max(1, Math.round(maxBytes / (1024 * 1024)))).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d);
   if (input.buffer.length === 0) throw new AppError(ERR.VALIDATION('فایل ارسالی خالی است.'));
-  if (input.buffer.length > MAX_MEDIA_BYTES) {
-    throw new AppError(ERR.VALIDATION('حجم فایل باید حداکثر ۸ مگابایت باشد.'));
+  if (input.buffer.length > maxBytes) {
+    throw new AppError(ERR.VALIDATION(`حجم فایل باید حداکثر ${mbFa} مگابایت باشد.`));
   }
-  const ext = MIME_EXT[input.mimeType.toLowerCase()];
+  const mime = input.mimeType.toLowerCase();
+  const ext = MIME_EXT[mime];
   if (!ext) {
-    throw new AppError(ERR.VALIDATION('نوع فایل مجاز نیست. فرمت‌های مجاز: JPG، PNG، WebP، GIF و MP4.'));
+    throw new AppError(ERR.VALIDATION('نوع فایل مجاز نیست. فرمت‌های مجاز: JPG، PNG، WebP، GIF، MP4 و PDF.'));
   }
-  if (!magicMatches(ext === 'jpg' ? 'image/jpeg' : input.mimeType.toLowerCase(), input.buffer)) {
+  if (!magicMatches(mime, input.buffer)) {
     throw new AppError(ERR.VALIDATION('محتوای فایل با نوع اعلام‌شده هم‌خوانی ندارد.'));
   }
 
@@ -167,6 +177,36 @@ export async function getOwnedMedia(tenantId: string, mediaId: string): Promise<
     .limit(1);
   if (!row) throw new AppError(ERR.NOT_FOUND('فایل'));
   return row;
+}
+
+/**
+ * Authorized media access (contract 14-contract item 7). A viewer may read a
+ * media row when:
+ *  1. it is their own upload (tenant match — receipts, ticket attachments),
+ *  2. they hold the support permission (staff reviewing receipts/attachments),
+ *  3. it is attached to a ticket message inside one of THEIR tickets (lets a
+ *     user open an attachment posted by support on their own ticket).
+ * Everything else is a 404 — no existence leak (§180).
+ */
+export async function getMediaForViewer(
+  viewer: { id: string; role: 'SUPER_ADMIN' | 'SUPPORT' | 'USER' },
+  mediaId: string
+): Promise<MediaRow> {
+  const db = getDb();
+  const [row] = await db.select().from(media).where(eq(media.id, mediaId)).limit(1);
+  if (!row) throw new AppError(ERR.NOT_FOUND('فایل'));
+  if (row.tenantId === viewer.id) return row;
+  if (roleHasPermission(viewer.role, 'support.tickets.any')) return row;
+
+  const [shared] = await db
+    .select({ id: ticketMessageAttachments.id })
+    .from(ticketMessageAttachments)
+    .innerJoin(ticketMessages, eq(ticketMessages.id, ticketMessageAttachments.messageId))
+    .innerJoin(tickets, eq(tickets.id, ticketMessages.ticketId))
+    .where(and(eq(ticketMessageAttachments.mediaId, mediaId), eq(tickets.tenantId, viewer.id)))
+    .limit(1);
+  if (shared) return row;
+  throw new AppError(ERR.NOT_FOUND('فایل'));
 }
 
 export async function deleteMedia(tenantId: string, mediaId: string): Promise<void> {

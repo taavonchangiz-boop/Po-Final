@@ -17,6 +17,7 @@ import { registerWordpressRoutes } from '../modules/wordpress/wordpress.routes.j
 import { registerNotificationRoutes } from '../modules/notifications/notification.routes.js';
 import { registerSupportRoutes } from '../modules/support/support.routes.js';
 import { registerAdminRoutes } from '../modules/admin/admin.routes.js';
+import { registerSettingsRoutes } from '../modules/settings/settings.routes.js';
 
 /** Stable API namespace (§57): /api/v1 */
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
@@ -40,6 +41,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       await registerNotificationRoutes(v1);
       await registerSupportRoutes(v1);
       await registerAdminRoutes(v1);
+      await registerSettingsRoutes(v1);
     },
     { prefix: '/api/v1' }
   );

@@ -12,7 +12,7 @@ export const NOTIFICATION_CATEGORIES: Array<{ key: string; labelFa: string; desc
   { key: 'PAYMENT', labelFa: 'پرداخت‌ها و کیف پول', descriptionFa: 'نتیجهٔ پرداخت‌ها و تغییرات موجودی' },
   { key: 'POST_STATUS', labelFa: 'وضعیت ارسال پست‌ها', descriptionFa: 'موفقیت یا شکست ارسال‌ها' },
   { key: 'BOT_EVENTS', labelFa: 'رویدادهای ربات', descriptionFa: 'پیام‌ها و تعامل‌های ربات' },
-  { key: 'BROADCAST', labelFa: 'اطلاعیه‌های پُستیار', descriptionFa: 'اخبار و اطلاعیه‌های سرویس' },
+  { key: 'BROADCAST', labelFa: 'اطلاعیه‌های پُست‌یار', descriptionFa: 'اخبار و اطلاعیه‌های سرویس' },
   { key: 'PASSWORD_RESET', labelFa: 'امنیت حساب', descriptionFa: 'بازیابی رمز عبور و هشدارهای امنیتی' },
 ];
 

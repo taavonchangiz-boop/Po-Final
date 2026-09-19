@@ -162,7 +162,7 @@ function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register'
       <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, marginBottom: 14, cursor: 'pointer' }}>
         <input type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} style={{ marginTop: 4 }} />
         <span>
-          <a href="/terms" target="_blank" rel="noreferrer">قوانین و مقررات</a> پُستیار را می‌پذیرم.
+          <a href="/terms" target="_blank" rel="noreferrer">قوانین و مقررات</a> پُست‌یار را می‌پذیرم.
           {errors.acceptTerms && <span className="field-error"> {errors.acceptTerms}</span>}
         </span>
       </label>

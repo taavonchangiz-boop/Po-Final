@@ -17,6 +17,8 @@ import { notifyTenant } from '../notifications/delivery.js';
 import { activateSubscription, activateSubscriptionTx } from '../subscriptions/plan.service.js';
 import { moveMoneyTx } from '../wallet/wallet.service.js';
 import { revokeAllUserSessions } from '../../security/sessions.js';
+import { referralHookFirstPurchase } from '../payments/payment.service.js';
+import { getPaymentSettings } from '../payments/payment-settings.service.js';
 
 export async function getOverview(): Promise<{
   users: number;
@@ -111,6 +113,19 @@ export async function grantSubscription(tenantId: string, planCode: string, mont
   return { subscriptionId: result.subscriptionId };
 }
 
+const PAYMENT_STATES = [
+  'CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'CANCELLED', 'REFUNDED',
+  'PENDING_REVIEW', 'REJECTED', 'COMPLETED',
+] as const;
+type PayState = (typeof PAYMENT_STATES)[number];
+
+/** Current state of a payment (for audit meta); null when missing. */
+export async function getPaymentState(paymentId: string): Promise<string | null> {
+  const db = getDb();
+  const [row] = await db.select({ state: payments.state }).from(payments).where(eq(payments.id, paymentId)).limit(1);
+  return row?.state ?? null;
+}
+
 export async function listAdminPayments(
   state: string | undefined,
   page: number,
@@ -119,9 +134,10 @@ export async function listAdminPayments(
   const db = getDb();
   const p = Math.max(1, page);
   const size = Math.min(100, Math.max(1, pageSize));
-  const validStates = ['CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'CANCELLED', 'REFUNDED'] as const;
-  type PayState = (typeof validStates)[number];
-  const where = state && (validStates as readonly string[]).includes(state) ? eq(payments.state, state as PayState) : undefined;
+  const where =
+    state && (PAYMENT_STATES as readonly string[]).includes(state)
+      ? eq(payments.state, state as PayState)
+      : undefined;
 
   const [totalRow] = await db.select({ value: count() }).from(payments).where(where);
   const rows = await db
@@ -134,11 +150,26 @@ export async function listAdminPayments(
       amountRial: payments.amountRial,
       gateway: payments.gateway,
       gatewayRef: payments.gatewayRef,
+      reference: payments.reference,
       state: payments.state,
       verifiedAt: payments.verifiedAt,
+      receiptMediaId: payments.receiptMediaId,
+      receiptNote: payments.receiptNote,
+      reviewedBy: payments.reviewedBy,
+      reviewedAt: payments.reviewedAt,
       createdAt: payments.createdAt,
+      // user (payer) summary
+      userFirstName: users.firstName,
+      userLastName: users.lastName,
+      userEmail: users.email,
+      userMobile: users.mobile,
+      // plan summary
+      planCode: plans.code,
+      planNameFa: plans.nameFa,
     })
     .from(payments)
+    .leftJoin(users, eq(users.id, payments.tenantId))
+    .leftJoin(plans, eq(plans.id, payments.planId))
     .where(where)
     .orderBy(desc(payments.createdAt))
     .limit(size)
@@ -153,35 +184,131 @@ export async function listAdminPayments(
 }
 
 /**
- * Manual verification path (§117 fallback): admin confirms a payment that the
- * gateway flow failed to settle. Applies the same side effects as the
- * automated callback, idempotently for wallet credits.
+ * Admin review of payments (contract 14-contract item 5).
+ *
+ * Two flavours share one settlement service:
+ *  - PENDING_REVIEW (card-to-card receipt) → state COMPLETED + reviewed_by/at.
+ *  - Online fallback (§117 manual verify: CREATED/REDIRECTED/FAILED) → state
+ *    VERIFIED, exactly like before.
+ *
+ * Idempotency: approving an already-settled payment (VERIFIED/COMPLETED) is a
+ * NO-OP SUCCESS (chosen over 409 so a double-click or retry never errors).
+ * All financial side effects (subscription activation / wallet credit /
+ * referral first-purchase hook) run in ONE transaction, mirroring the online
+ * verify path.
  */
-export async function approvePayment(actorId: string, paymentId: string): Promise<{ ok: boolean; message: string }> {
+export async function approvePayment(
+  actorId: string,
+  paymentId: string,
+  note?: string
+): Promise<{ ok: boolean; message: string }> {
   const db = getDb();
   const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
   if (!payment) throw new AppError(ERR.NOT_FOUND('پرداخت'));
-  if (payment.state === 'VERIFIED') {
+
+  if (payment.state === 'VERIFIED' || payment.state === 'COMPLETED') {
     return { ok: true, message: 'این پرداخت پیش‌تر تأیید شده است.' };
   }
-  if (payment.state === 'REFUNDED' || payment.state === 'CANCELLED') {
-    throw new AppError(ERR.VALIDATION('این پرداخت قابل تأیید دستی نیست.'));
+  if (payment.state === 'REJECTED' || payment.state === 'REFUNDED' || payment.state === 'CANCELLED') {
+    throw new AppError(ERR.CONFLICT('این پرداخت قابل تأیید نیست.'));
   }
 
+  const now = new Date();
+
   await db.transaction(async (tx) => {
+    // Re-read under lock: concurrent approvals must not double-settle.
+    const [locked] = await tx.select().from(payments).where(eq(payments.id, payment.id)).limit(1).for('update');
+    if (!locked) throw new AppError(ERR.NOT_FOUND('پرداخت'));
+    if (locked.state === 'VERIFIED' || locked.state === 'COMPLETED') return; // settled concurrently → no-op
+    if (locked.state === 'REJECTED' || locked.state === 'REFUNDED' || locked.state === 'CANCELLED') {
+      throw new AppError(ERR.CONFLICT('این پرداخت قابل تأیید نیست.'));
+    }
+
+    const lockedTarget: PayState = locked.state === 'PENDING_REVIEW' ? 'COMPLETED' : 'VERIFIED';
+    const metaJson: Record<string, unknown> = { ...(locked.metaJson ?? {}) };
+    if (note && note.trim() !== '') metaJson.reviewNote = note.trim().slice(0, 500);
+
     await tx
       .update(payments)
-      .set({ state: 'VERIFIED', verifiedAt: new Date() })
-      .where(and(eq(payments.id, payment.id), eq(payments.state, payment.state)));
+      .set({
+        state: lockedTarget,
+        verifiedAt: now,
+        reviewedBy: actorId,
+        reviewedAt: now,
+        metaJson,
+      })
+      .where(and(eq(payments.id, locked.id), eq(payments.state, locked.state)));
 
-    if (payment.purpose === 'SUBSCRIPTION' && payment.planId) {
-      await activateSubscriptionTx(tx, payment.tenantId, payment.planId, payment.months);
-    } else if (payment.purpose === 'WALLET_TOPUP') {
-      await moveMoneyTx(tx, payment.tenantId, 'CREDIT', Number(payment.amountRial), { type: 'payment', id: payment.id }, 'شارژ کیف پول (تأیید دستی)');
+    if (locked.purpose === 'SUBSCRIPTION' && locked.planId) {
+      await activateSubscriptionTx(tx, locked.tenantId, locked.planId, locked.months);
+      await referralHookFirstPurchase(locked.tenantId, Number(locked.amountRial), tx);
+    } else if (locked.purpose === 'WALLET_TOPUP') {
+      await moveMoneyTx(tx, locked.tenantId, 'CREDIT', Number(locked.amountRial), { type: 'payment', id: locked.id }, 'شارژ کیف پول (تأیید دستی)');
     }
   });
 
+  await emitPaymentCompleted(payment, actorId);
   return { ok: true, message: 'پرداخت با موفقیت تأیید و اعمال شد.' };
+}
+
+async function emitPaymentCompleted(
+  payment: typeof payments.$inferSelect,
+  actorId: string
+): Promise<void> {
+  await notifyTenant({
+    tenantId: payment.tenantId,
+    kind: 'PAYMENT_APPROVED',
+    titleFa: 'پرداخت شما تأیید شد',
+    bodyFa:
+      payment.purpose === 'SUBSCRIPTION'
+        ? 'رسید پرداخت شما تأیید شد و اشتراک شما فعال/تمدید گردید.'
+        : 'پرداخت شما تأیید و کیف پول شما شارژ شد.',
+  }).catch(() => undefined);
+  void actorId;
+}
+
+/**
+ * Rejects a PENDING_REVIEW card-to-card payment. Idempotent: rejecting an
+ * already-REJECTED payment is a no-op success; other non-reviewable states
+ * raise a stable CONFLICT.
+ */
+export async function rejectPayment(
+  actorId: string,
+  paymentId: string,
+  reason: string
+): Promise<{ ok: boolean; message: string }> {
+  const db = getDb();
+  const [payment] = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+  if (!payment) throw new AppError(ERR.NOT_FOUND('پرداخت'));
+  if (payment.state === 'REJECTED') {
+    return { ok: true, message: 'این پرداخت پیش‌تر رد شده است.' };
+  }
+  if (payment.state !== 'PENDING_REVIEW') {
+    throw new AppError(ERR.CONFLICT('فقط پرداخت‌های در انتظار بررسی قابل رد هستند.'));
+  }
+
+  const metaJson: Record<string, unknown> = { ...(payment.metaJson ?? {}), rejectReason: reason.trim().slice(0, 500) };
+  const now = new Date();
+  const res = await db
+    .update(payments)
+    .set({ state: 'REJECTED', reviewedBy: actorId, reviewedAt: now, metaJson })
+    .where(and(eq(payments.id, payment.id), eq(payments.state, 'PENDING_REVIEW')));
+  const changed = Array.isArray(res) ? Number(res[0]?.affectedRows ?? 0) : Number((res as { affectedRows?: number })?.affectedRows ?? 0);
+  if (changed === 0) {
+    // Lost a race with approve/another reject — report the current truth.
+    const [fresh] = await db.select({ state: payments.state }).from(payments).where(eq(payments.id, payment.id)).limit(1);
+    if (fresh?.state === 'REJECTED') return { ok: true, message: 'این پرداخت پیش‌تر رد شده است.' };
+    throw new AppError(ERR.CONFLICT('این پرداخت دیگر قابل رد نیست.'));
+  }
+
+  await notifyTenant({
+    tenantId: payment.tenantId,
+    kind: 'PAYMENT_REJECTED',
+    titleFa: 'رسید پرداخت شما تأیید نشد',
+    bodyFa: `رسید پرداخت شما تأیید نشد. دلیل: ${reason.trim().slice(0, 200)}`,
+  }).catch(() => undefined);
+
+  return { ok: true, message: 'پرداخت رد شد.' };
 }
 
 export async function listAuditLogs(
@@ -260,8 +387,16 @@ export async function getSettings(): Promise<Record<string, unknown>> {
   const map: Record<string, unknown> = {};
   for (const r of rows) {
     if (r.settingKey.startsWith('notif_pref:')) continue; // per-tenant data stays hidden
+    if (r.settingKey === 'cardToCardCards') continue; // re-added below in coerced API shape
     map[r.settingKey] = r.valueJson;
   }
+  // Payment gateway settings always surface in their contract shape
+  // (contract 14-contract item 2), even if the 0003 seed rows are missing.
+  const ps = await getPaymentSettings();
+  map.paymentOnlineEnabled = ps.onlineEnabled;
+  map.paymentCardToCardEnabled = ps.cardToCardEnabled;
+  map.paymentProvider = ps.provider;
+  map.cardToCardCards = ps.cards;
   return map;
 }
 
