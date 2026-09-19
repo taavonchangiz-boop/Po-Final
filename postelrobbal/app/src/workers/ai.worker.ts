@@ -5,6 +5,7 @@ import { loadEnv } from '../config/env.js';
 import { getDb } from '../db/client.js';
 import { aiJobs } from '../db/schema.js';
 import { aiComplete } from '../providers/ai/ai-providers.js';
+import { resolveAiRuntimeOverride } from '../modules/admin/system-settings.service.js';
 import { emitEvent } from '../core/events.js';
 import { AppError } from '../core/errors.js';
 import { createLogger } from '../core/logger.js';
@@ -31,12 +32,19 @@ export function startAiWorker(): Worker {
     await db.update(aiJobs).set({ status: 'RUNNING' }).where(eq(aiJobs.id, aiJob.id));
 
     try {
-      const result = await aiComplete(aiJob.provider || 'openai', {
-        ...(aiJob.purpose === 'CAPTION' ? { system: CAPTION_SYSTEM_FA } : {}),
-        user: aiJob.inputText,
-        timeoutMs: 30_000,
-        maxTokens: 700,
-      });
+      // Round 18: admin-stored key/custom base URL/model override the env defaults.
+      const provider = aiJob.provider || 'openai';
+      const override = await resolveAiRuntimeOverride(provider);
+      const result = await aiComplete(
+        provider,
+        {
+          ...(aiJob.purpose === 'CAPTION' ? { system: CAPTION_SYSTEM_FA } : {}),
+          user: aiJob.inputText,
+          timeoutMs: 30_000,
+          maxTokens: 700,
+        },
+        override
+      );
       await db
         .update(aiJobs)
         .set({

@@ -31,6 +31,7 @@ export async function registerSettingsRoutes(app: FastifyInstance): Promise<void
   });
 
   // Whitelisted fields only — termsNoteFa stays admin-facing.
+  // Round 18: supportTelegramUrl/supportBaleUrl are public contact info.
   app.get('/settings/general', async () => {
     const s = await getGeneralSettings();
     return {
@@ -40,6 +41,8 @@ export async function registerSettingsRoutes(app: FastifyInstance): Promise<void
         siteTaglineFa: s.siteTaglineFa,
         supportEmail: s.supportEmail,
         supportPhone: s.supportPhone,
+        supportTelegramUrl: s.supportTelegramUrl,
+        supportBaleUrl: s.supportBaleUrl,
         maintenanceEnabled: s.maintenanceEnabled,
         maintenanceMessageFa: s.maintenanceMessageFa,
       },

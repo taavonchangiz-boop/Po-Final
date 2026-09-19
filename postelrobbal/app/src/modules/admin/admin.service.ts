@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, ne, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import {
   users,
@@ -14,6 +14,7 @@ import {
   bots,
   media,
   tickets,
+  walletAccounts,
   aiJobs,
   goldConfigs,
   goldSnapshots,
@@ -195,6 +196,177 @@ export async function getOverview(): Promise<AdminOverview> {
       ticketsOpen: num(ticketOpen[0]?.value),
       deliveries24h: num(targetSent24h[0]?.value),
       deliveriesFailed24h: num(targetFailed24h[0]?.value),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Round 18 — «پروفایل ۳۶۰ درجه» (asovin user-profile-modal parity, extended)
+// ---------------------------------------------------------------------------
+
+const ULIDISH = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+
+export interface UserProfile360 {
+  user: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    mobile: string;
+    businessName: string;
+    businessType: string;
+    role: string;
+    status: string;
+    createdAt: Date;
+    lastLoginAt: Date | null;
+    avatarKind: string;
+    avatarValue: string;
+    avatarMediaId: string | null;
+    referralCode: string | null;
+  };
+  subscription: { planNameFa: string; planCode: string; state: string; startedAt: Date; expiresAt: Date } | null;
+  stats: {
+    channels: { total: number; active: number };
+    bots: { total: number; active: number };
+    posts: { total: number; published: number };
+    tickets: { total: number; open: number };
+    payments: { verifiedCount: number; verifiedSumRial: number };
+    walletBalanceRial: number;
+  };
+}
+
+type ProfileCountRow = { total: number; active: number };
+
+/**
+ * 360° profile for one user: identity + active (or most recent) subscription
+ * + bounded-concurrency stats. Missing/malformed ids are an indistinguishable
+ * 404 (§180 no existence leak).
+ */
+export async function getUserProfile360(userId: string): Promise<UserProfile360> {
+  if (!ULIDISH.test(userId)) throw new AppError(ERR.NOT_FOUND('کاربر'));
+  const db = getDb();
+  const [user] = await db
+    .select({
+      id: users.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      email: users.email,
+      mobile: users.mobile,
+      businessName: users.businessName,
+      businessType: users.businessType,
+      role: users.role,
+      status: users.status,
+      createdAt: users.createdAt,
+      lastLoginAt: users.lastLoginAt,
+      avatarKind: users.avatarKind,
+      avatarValue: users.avatarValue,
+      avatarMediaId: users.avatarMediaId,
+      referralCode: users.referralCode,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!user) throw new AppError(ERR.NOT_FOUND('کاربر'));
+
+  // Preferred: ACTIVE subscription (newest expiry); fallback: most recent row
+  // of any state so admins always see the last known plan.
+  const subRows = await db
+    .select({
+      planNameFa: plans.nameFa,
+      planCode: plans.code,
+      state: subscriptions.state,
+      startedAt: subscriptions.startedAt,
+      expiresAt: subscriptions.expiresAt,
+    })
+    .from(subscriptions)
+    .innerJoin(plans, eq(plans.id, subscriptions.planId))
+    .where(eq(subscriptions.tenantId, userId))
+    .orderBy(
+      // ACTIVE first, then newest expiry / most recently touched row.
+      sql`CASE WHEN ${subscriptions.state} = 'ACTIVE' THEN 0 ELSE 1 END`,
+      desc(subscriptions.expiresAt),
+      desc(subscriptions.updatedAt)
+    )
+    .limit(1);
+  const subscription = subRows[0] ?? null;
+
+  const statResults = await mapLimit<unknown>(
+    [
+      () =>
+        db
+          .select({
+            total: count(),
+            active: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${channels.status} = 'ACTIVE' THEN 1 ELSE 0 END), 0)`,
+          })
+          .from(channels)
+          .where(eq(channels.tenantId, userId)),
+      () =>
+        db
+          .select({
+            total: count(),
+            active: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${bots.status} = 'ACTIVE' THEN 1 ELSE 0 END), 0)`,
+          })
+          .from(bots)
+          .where(eq(bots.tenantId, userId)),
+      () =>
+        db
+          .select({
+            total: count(),
+            active: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${posts.state} = 'PUBLISHED' THEN 1 ELSE 0 END), 0)`,
+          })
+          .from(posts)
+          .where(eq(posts.tenantId, userId)),
+      () =>
+        db
+          .select({
+            total: count(),
+            active: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${tickets.state} = 'OPEN' THEN 1 ELSE 0 END), 0)`,
+          })
+          .from(tickets)
+          .where(eq(tickets.tenantId, userId)),
+      () =>
+        db
+          .select({
+            total: count(),
+            sum: sql<string | number | null>`COALESCE(SUM(${payments.amountRial}), 0)`,
+          })
+          .from(payments)
+          .where(and(eq(payments.tenantId, userId), inArray(payments.state, ['VERIFIED', 'COMPLETED']))),
+      () => db.select({ balance: walletAccounts.balanceRial }).from(walletAccounts).where(eq(walletAccounts.tenantId, userId)).limit(1),
+    ],
+    5
+  ) as [
+    ProfileCountRow[],
+    ProfileCountRow[],
+    ProfileCountRow[],
+    ProfileCountRow[],
+    Array<{ total: number; sum: string | number | null }>,
+    Array<{ balance: number | string }>,
+  ];
+
+  const [channelRows, botRows, postRows, ticketRows, payRows, walletRows] = statResults;
+
+  return {
+    user,
+    subscription: subscription
+      ? {
+          planNameFa: subscription.planNameFa,
+          planCode: subscription.planCode,
+          state: subscription.state,
+          startedAt: subscription.startedAt,
+          expiresAt: subscription.expiresAt,
+        }
+      : null,
+    stats: {
+      channels: { total: num(channelRows[0]?.total), active: num(channelRows[0]?.active) },
+      bots: { total: num(botRows[0]?.total), active: num(botRows[0]?.active) },
+      posts: { total: num(postRows[0]?.total), published: num(postRows[0]?.active) },
+      tickets: { total: num(ticketRows[0]?.total), open: num(ticketRows[0]?.active) },
+      payments: {
+        verifiedCount: num(payRows[0]?.total),
+        verifiedSumRial: num(payRows[0]?.sum),
+      },
+      walletBalanceRial: num(walletRows[0]?.balance),
     },
   };
 }

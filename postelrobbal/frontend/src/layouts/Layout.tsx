@@ -11,6 +11,7 @@ import { NavIcon, type NavIconName } from '../components/icons';
 import { BaleIcon, RubikaIcon, TelegramIcon } from '../components/PlatformIcons';
 import { Avatar } from '../components/Avatar';
 import { avatarPhotoUrl } from '../lib/api';
+import { ClockChip } from '../components/ClockChip';
 
 /* ------------------------------------------------------------------ */
 /* Landing shell — floating glass header + footer (Task 14-a)          */
@@ -206,33 +207,8 @@ function navMatch(pathname: string, to: string): boolean {
   return to === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(to);
 }
 
-/** Jalali date + 24h clock chip next to the notification bell (item 10).
- *  Format: «شنبه ۲۸ شهریور ۱۴۰۵ - ۱۹:۱۱» — always 24-hour, never AM/PM. */
-const dashDateFmt = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
-  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-});
-const dashTimeFmt = new Intl.DateTimeFormat('fa-IR', {
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-});
-
-function ClockChip() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(new Date()), 15000);
-    return () => window.clearInterval(t);
-  }, []);
-  return (
-    <span className="dash-clock" title="تاریخ و ساعت — تقویم شمسی، ساعت ۲۴ ساعته">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="8.6" />
-        <path d="M12 7.6V12l3 2" />
-      </svg>
-      <span className="dash-clock__date">{dashDateFmt.format(now)}</span>
-      <span className="dash-clock__sep" aria-hidden="true">-</span>
-      <span className="dash-clock__time" dir="ltr">{dashTimeFmt.format(now)}</span>
-    </span>
-  );
-}
+/* Round 18-b: the ClockChip (Jalali date + 24h time) moved to the shared
+   component src/components/ClockChip.tsx — the admin shell renders it too. */
 
 /** Authenticated application shell: always-expanded sidebar on desktop,
  *  compact top bar + glass bottom navigation with «بیشتر» sheet on mobile. */

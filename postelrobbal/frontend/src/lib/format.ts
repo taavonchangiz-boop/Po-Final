@@ -69,6 +69,29 @@ export function faDateTime(input: string | number | Date | null | undefined): st
   return `${faDate(d)} ساعت ${faDigits(timeFmt.format(d))}`;
 }
 
+/**
+ * Jalali long date WITH weekday, assembled manually from formatToParts so the
+ * part order is the required Persian order «شنبه، ۲۸ شهریور ۱۴۰۵» (weekday،
+ * day month year). Intl's default .format() picks its own part order
+ * («۱۴۰۵ شهریور ۲۸, شنبه») which is NOT the required header format.
+ * numberingSystem:'latn' pins LATIN digits deterministically (unlike the
+ * default fa-IR locale digits, which vary per browser) so faDigits() can
+ * reliably convert them afterwards. Round 18-b.
+ */
+const faDateLongFmt = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
+  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  numberingSystem: 'latn',
+});
+
+export function faDateLong(input: string | number | Date | null | undefined): string {
+  const d = asDate(input);
+  if (!d) return '—';
+  const parts = faDateLongFmt.formatToParts(d);
+  const pick = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? '';
+  return `${pick('weekday')}، ${faDigits(pick('day'))} ${pick('month')} ${faDigits(pick('year'))}`;
+}
+
 /** Relative Persian time: «۳ روز پیش». */
 export function faRelative(input: string | number | Date | null | undefined): string {
   const d = asDate(input);

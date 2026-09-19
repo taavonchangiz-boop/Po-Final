@@ -5,9 +5,11 @@ import { useToast } from '../../lib/toast';
 import { errText, Toggle } from './shared';
 
 /* ------------------------------------------------------------------ */
-/* امنیت — registration + captcha switches (Task 17-b).                */
-/* GET/PUT /admin/settings/security → { registrationEnabled,           */
-/* captchaEnabled }. Public mirror: GET /settings/security.            */
+/* امنیت — registration + captcha switches (Task 17-b; round 18-c      */
+/* polish: the two controls now live in labeled fieldsets, logic and   */
+/* labels unchanged). GET/PUT /admin/settings/security →               */
+/* { registrationEnabled, captchaEnabled }. Public mirror:             */
+/* GET /settings/security.                                             */
 /* ------------------------------------------------------------------ */
 
 export default function AdminSettingsSecurity() {
@@ -78,25 +80,31 @@ export default function AdminSettingsSecurity() {
       )}
 
       <Card>
-        <div className="adm-card-head"><strong>کنترل دسترسی و ورود</strong></div>
-        <div className="adm-inline-row">
-          <div>
-            <div className="adm-inline-row__title">ثبت‌نام کاربران جدید</div>
-            <div className="adm-inline-row__desc">
-              اجازهٔ ساخت حساب رایگان در صفحهٔ ورود. در زمان‌های خاص (مثل کمپین‌های محدود) می‌توانید آن را خاموش کنید.
+        <fieldset className="adm-fset">
+          <legend>ثبت‌نام کاربران</legend>
+          <div className="adm-inline-row">
+            <div>
+              <div className="adm-inline-row__title">ثبت‌نام کاربران جدید</div>
+              <div className="adm-inline-row__desc">
+                اجازهٔ ساخت حساب رایگان در صفحهٔ ورود. در زمان‌های خاص (مثل کمپین‌های محدود) می‌توانید آن را خاموش کنید.
+              </div>
             </div>
+            <Toggle checked={registrationEnabled} onChange={setRegistrationEnabled} label="ثبت‌نام کاربران جدید" />
           </div>
-          <Toggle checked={registrationEnabled} onChange={setRegistrationEnabled} label="ثبت‌نام کاربران جدید" />
-        </div>
-        <div className="adm-inline-row">
-          <div>
-            <div className="adm-inline-row__title">کپچای امنیتی در ورود و ثبت‌نام</div>
-            <div className="adm-inline-row__desc">
-              کد امنیتی تصویری برای جلوگیری از ثبت‌نام و ورود ربات‌ها؛ هر کد فقط یک‌بار قابل استفاده است.
+        </fieldset>
+
+        <fieldset className="adm-fset">
+          <legend>کپچای امنیتی</legend>
+          <div className="adm-inline-row">
+            <div>
+              <div className="adm-inline-row__title">کپچای امنیتی در ورود و ثبت‌نام</div>
+              <div className="adm-inline-row__desc">
+                کد امنیتی تصویری برای جلوگیری از ثبت‌نام و ورود ربات‌ها؛ هر کد فقط یک‌بار قابل استفاده است.
+              </div>
             </div>
+            <Toggle checked={captchaEnabled} onChange={setCaptchaEnabled} label="کپچای امنیتی" />
           </div>
-          <Toggle checked={captchaEnabled} onChange={setCaptchaEnabled} label="کپچای امنیتی" />
-        </div>
+        </fieldset>
       </Card>
 
       <Card className="adm-savebar">

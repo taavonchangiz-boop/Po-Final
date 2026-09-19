@@ -5,6 +5,8 @@ import { PageLoading } from '../components/ui';
 import { NavIcon } from '../components/icons';
 import { ADMIN_SECTIONS } from '../pages/admin/shared';
 import { useToast } from '../lib/toast';
+import { ClockChip } from '../components/ClockChip';
+import { AdminBell } from '../components/AdminBell';
 import '../styles/admin.css';
 
 /* ------------------------------------------------------------------ */
@@ -127,6 +129,8 @@ export default function AdminLayout() {
           </div>
         </div>
         <div className="adm-topbar__actions">
+          {/* Topbar clock chip (round 18-b) — parity with the user dashboard. */}
+          <ClockChip />
           {/* Switch between admin panel and the user dashboard, both ways. */}
           <Link to="/dashboard" className="btn btn-soft btn-sm adm-topbar__back" aria-label="بازگشت به پیشخوان کاربری">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -143,6 +147,10 @@ export default function AdminLayout() {
           >
             خروج
           </button>
+          {/* Admin bell (round 18-b): pending payments / open tickets / new
+              users — leftmost action in the RTL row, so its popup anchors
+              inline-start (left:0) without overflowing the viewport. */}
+          <AdminBell />
         </div>
       </header>
 

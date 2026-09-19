@@ -82,7 +82,24 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
       .limit(pageSize)
       .offset((page - 1) * pageSize);
 
-    return { success: true, data: { items: rows, total: Number(totalRow?.value ?? 0), page, pageSize } };
+    // Round 18 fix: the user dashboard bell badge reads `d.unread` — count of
+    // this tenant's notifications with readAt IS NULL (independent of paging /
+    // the unreadOnly filter).
+    const [unreadRow] = await db
+      .select({ value: count() })
+      .from(notifications)
+      .where(and(eq(notifications.tenantId, me.id), isNull(notifications.readAt)));
+
+    return {
+      success: true,
+      data: {
+        items: rows,
+        unread: Number(unreadRow?.value ?? 0),
+        total: Number(totalRow?.value ?? 0),
+        page,
+        pageSize,
+      },
+    };
   });
 
   app.post('/notifications/:id/read', { preHandler: [app.requireAuth] }, async (req) => {

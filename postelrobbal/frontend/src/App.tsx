@@ -37,10 +37,12 @@ const AdminEmail = lazy(() => import('./pages/admin/AdminEmail'));
 const AdminChannels = lazy(() => import('./pages/admin/AdminChannels'));
 const AdminBots = lazy(() => import('./pages/admin/AdminBots'));
 const AdminBroadcast = lazy(() => import('./pages/admin/AdminBroadcast'));
+const AdminTickets = lazy(() => import('./pages/admin/AdminTickets'));
 const AdminLogs = lazy(() => import('./pages/admin/AdminLogs'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminSettingsGeneral = lazy(() => import('./pages/admin/AdminSettingsGeneral'));
 const AdminSettingsAi = lazy(() => import('./pages/admin/AdminSettingsAi'));
+const AdminSettingsGold = lazy(() => import('./pages/admin/AdminSettingsGold'));
 const AdminSettingsReferral = lazy(() => import('./pages/admin/AdminSettingsReferral'));
 const AdminSettingsSecurity = lazy(() => import('./pages/admin/AdminSettingsSecurity'));
 const PaymentResult = lazy(() => import('./pages/PaymentResult'));
@@ -91,10 +93,12 @@ export function App() {
           <Route path="channels" element={<AdminChannels />} />
           <Route path="bots" element={<AdminBots />} />
           <Route path="broadcast" element={<AdminBroadcast />} />
+          <Route path="tickets" element={<AdminTickets />} />
           <Route path="logs" element={<AdminLogs />} />
           <Route path="settings" element={<AdminSettings />} />
           <Route path="settings/general" element={<AdminSettingsGeneral />} />
           <Route path="settings/ai" element={<AdminSettingsAi />} />
+          <Route path="settings/gold" element={<AdminSettingsGold />} />
           <Route path="settings/referral" element={<AdminSettingsReferral />} />
           <Route path="settings/security" element={<AdminSettingsSecurity />} />
         </Route>

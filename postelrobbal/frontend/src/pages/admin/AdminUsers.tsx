@@ -5,6 +5,7 @@ import { Avatar } from '../../components/Avatar';
 import { faDate, faDigits } from '../../lib/format';
 import { useToast } from '../../lib/toast';
 import { PAGE_SIZE, ROLE_FA, USER_STATUS_FA, errText, type AdminPlanDto, type AdminUserRow } from './shared';
+import { UserProfile360 } from './UserProfile360';
 
 /* ------------------------------------------------------------------ */
 /* کاربران — search, suspend/activate, gift subscription (Task 16-b).  */
@@ -31,6 +32,10 @@ export default function AdminUsers() {
   const [grantPlan, setGrantPlan] = useState('');
   const [grantMonths, setGrantMonths] = useState(1);
   const [grantBusy, setGrantBusy] = useState(false);
+
+  // پروفایل ۳۶۰° modal (round 18-c) — quick actions reuse the same
+  // grant/confirm dialogs below (single-sourced behavior).
+  const [profileUser, setProfileUser] = useState<AdminUserRow | null>(null);
 
   const loadUsers = async (p: number, term: string) => {
     setLoading(true);
@@ -168,6 +173,9 @@ export default function AdminUsers() {
                         <td data-label="تاریخ عضویت">{faDate(u.createdAt)}</td>
                         <td>
                           <div className="adm-table-actions">
+                            <Button size="sm" variant="ghost" onClick={() => setProfileUser(u)}>
+                              پروفایل ۳۶۰°
+                            </Button>
                             <Button
                               size="sm"
                               variant="ghost"
@@ -237,6 +245,23 @@ export default function AdminUsers() {
           <Button variant="ghost" onClick={() => setGrantUser(null)}>انصراف</Button>
         </div>
       </Modal>
+
+      <UserProfile360
+        user={profileUser}
+        onClose={() => setProfileUser(null)}
+        onGift={(u) => {
+          // asovin triggerGiftFromProfile flow: close 360, open the existing grant modal
+          setProfileUser(null);
+          setGrantUser(u);
+          setGrantPlan(plans[0]?.code ?? '');
+          setGrantMonths(1);
+        }}
+        onToggleStatus={(u) => {
+          // close 360, open the existing suspend/activate ConfirmDialog
+          setProfileUser(null);
+          setConfirmAction({ user: u, suspend: u.status !== 'SUSPENDED' });
+        }}
+      />
     </>
   );
 }

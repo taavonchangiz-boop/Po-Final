@@ -392,16 +392,20 @@ export interface GeneralSettings {
   siteTaglineFa: string;
   supportEmail: string;
   supportPhone: string;
+  supportTelegramUrl: string;
+  supportBaleUrl: string;
   termsNoteFa: string;
   maintenanceEnabled: boolean;
   maintenanceMessageFa: string;
 }
 
-const GENERAL_LIMITS: Record<'siteNameFa' | 'siteTaglineFa' | 'supportEmail' | 'supportPhone' | 'termsNoteFa' | 'maintenanceMessageFa', number> = {
+const GENERAL_LIMITS: Record<'siteNameFa' | 'siteTaglineFa' | 'supportEmail' | 'supportPhone' | 'supportTelegramUrl' | 'supportBaleUrl' | 'termsNoteFa' | 'maintenanceMessageFa', number> = {
   siteNameFa: 60,
   siteTaglineFa: 120,
   supportEmail: 190,
   supportPhone: 20,
+  supportTelegramUrl: 190,
+  supportBaleUrl: 190,
   termsNoteFa: 300,
   maintenanceMessageFa: 300,
 };
@@ -411,6 +415,8 @@ const GENERAL_DEFAULTS: GeneralSettings = {
   siteTaglineFa: '',
   supportEmail: '',
   supportPhone: '',
+  supportTelegramUrl: '',
+  supportBaleUrl: '',
   termsNoteFa: '',
   maintenanceEnabled: false,
   maintenanceMessageFa: '',
@@ -428,6 +434,8 @@ export async function getGeneralSettings(): Promise<GeneralSettings> {
   s.siteTaglineFa = str('siteTaglineFa') ?? s.siteTaglineFa;
   s.supportEmail = str('supportEmail') ?? s.supportEmail;
   s.supportPhone = str('supportPhone') ?? s.supportPhone;
+  s.supportTelegramUrl = str('supportTelegramUrl') ?? s.supportTelegramUrl;
+  s.supportBaleUrl = str('supportBaleUrl') ?? s.supportBaleUrl;
   s.termsNoteFa = str('termsNoteFa') ?? s.termsNoteFa;
   if (typeof doc['maintenanceEnabled'] === 'boolean') s.maintenanceEnabled = doc['maintenanceEnabled'];
   s.maintenanceMessageFa = str('maintenanceMessageFa') ?? s.maintenanceMessageFa;
@@ -439,6 +447,8 @@ export interface GeneralSettingsPatch {
   siteTaglineFa?: string;
   supportEmail?: string;
   supportPhone?: string;
+  supportTelegramUrl?: string;
+  supportBaleUrl?: string;
   termsNoteFa?: string;
   maintenanceEnabled?: boolean;
   maintenanceMessageFa?: string;
@@ -467,6 +477,22 @@ export async function putGeneralSettings(patch: GeneralSettingsPatch): Promise<s
     merged.supportPhone = ensureDocStr(patch.supportPhone, 'supportPhone', GENERAL_LIMITS.supportPhone);
     updated.push('supportPhone');
   }
+  if (patch.supportTelegramUrl !== undefined) {
+    const v = ensureDocStr(patch.supportTelegramUrl, 'supportTelegramUrl', GENERAL_LIMITS.supportTelegramUrl);
+    if (v !== '' && !v.startsWith('https://')) {
+      throw new AppError(ERR.VALIDATION('آدرس تلگرام باید با https:// شروع شود.'));
+    }
+    merged.supportTelegramUrl = v;
+    updated.push('supportTelegramUrl');
+  }
+  if (patch.supportBaleUrl !== undefined) {
+    const v = ensureDocStr(patch.supportBaleUrl, 'supportBaleUrl', GENERAL_LIMITS.supportBaleUrl);
+    if (v !== '' && !v.startsWith('https://')) {
+      throw new AppError(ERR.VALIDATION('آدرس بله باید با https:// شروع شود.'));
+    }
+    merged.supportBaleUrl = v;
+    updated.push('supportBaleUrl');
+  }
   if (patch.termsNoteFa !== undefined) {
     merged.termsNoteFa = ensureDocStr(patch.termsNoteFa, 'termsNoteFa', GENERAL_LIMITS.termsNoteFa);
     updated.push('termsNoteFa');
@@ -483,26 +509,52 @@ export async function putGeneralSettings(patch: GeneralSettingsPatch): Promise<s
   return updated;
 }
 
-// ---- ai settings (default provider) -------------------------------------
+// ---- ai settings (provider + global key / custom endpoint) ---------------
 
 export type AiProviderId = (typeof AI_PROVIDER_IDS)[number];
 
 export interface AiSettings {
   default_provider: AiProviderId;
+  hasApiKey: boolean;
+  apiKeyMasked: string;
+  customBaseUrl: string;
+  customModel: string;
 }
 
-const AI_DEFAULTS: AiSettings = { default_provider: 'openai' };
+const AI_DEFAULTS: AiSettings = { default_provider: 'openai', hasApiKey: false, apiKeyMasked: '', customBaseUrl: '', customModel: '' };
+
+const AI_DOC_LIMITS = { apiKey: 190, customBaseUrl: 190, customModel: 80 } as const;
+
+/** Masked view of the stored global AI key — the raw key NEVER leaves the server. */
+function maskApiKey(key: string): string {
+  return key.length > 0 ? `••••${key.slice(-4)}` : '';
+}
 
 export async function getAiSettings(): Promise<AiSettings> {
-  const raw = (await readSettingDoc('ai'))['default_provider'];
-  if (typeof raw === 'string' && (AI_PROVIDER_IDS as readonly string[]).includes(raw.toLowerCase())) {
-    return { default_provider: raw.toLowerCase() as AiProviderId };
+  const doc = await readSettingDoc('ai');
+  const rawProvider = doc['default_provider'];
+  const s: AiSettings = { ...AI_DEFAULTS };
+  if (typeof rawProvider === 'string' && (AI_PROVIDER_IDS as readonly string[]).includes(rawProvider.toLowerCase())) {
+    s.default_provider = rawProvider.toLowerCase() as AiProviderId;
   }
-  return { ...AI_DEFAULTS };
+  const rawKey = doc['apiKey'];
+  if (typeof rawKey === 'string' && rawKey !== '') {
+    s.hasApiKey = true;
+    s.apiKeyMasked = maskApiKey(rawKey);
+  }
+  const baseUrl = doc['customBaseUrl'];
+  if (typeof baseUrl === 'string') s.customBaseUrl = baseUrl.trim().slice(0, AI_DOC_LIMITS.customBaseUrl);
+  const model = doc['customModel'];
+  if (typeof model === 'string') s.customModel = model.trim().slice(0, AI_DOC_LIMITS.customModel);
+  return s;
 }
 
 export interface AiSettingsPatch {
   default_provider?: AiProviderId;
+  /** Write-only: stored as-is; '' clears the stored key. Never echoed back. */
+  api_key?: string;
+  custom_base_url?: string;
+  custom_model?: string;
 }
 
 export async function putAiSettings(patch: AiSettingsPatch): Promise<string[]> {
@@ -516,35 +568,99 @@ export async function putAiSettings(patch: AiSettingsPatch): Promise<string[]> {
     merged['default_provider'] = patch.default_provider;
     updated.push('default_provider');
   }
+  if (patch.api_key !== undefined) {
+    const v = ensureDocStr(patch.api_key, 'api_key', AI_DOC_LIMITS.apiKey);
+    // Stored as-is; empty string clears the key (env fallback resumes).
+    merged['apiKey'] = v;
+    updated.push('api_key');
+  }
+  if (patch.custom_base_url !== undefined) {
+    const v = ensureDocStr(patch.custom_base_url, 'custom_base_url', AI_DOC_LIMITS.customBaseUrl);
+    if (v !== '' && !v.startsWith('https://')) {
+      throw new AppError(ERR.VALIDATION('آدرس سفارشی هوش مصنوعی باید با https:// شروع شود.'));
+    }
+    merged['customBaseUrl'] = v;
+    updated.push('custom_base_url');
+  }
+  if (patch.custom_model !== undefined) {
+    merged['customModel'] = ensureDocStr(patch.custom_model, 'custom_model', AI_DOC_LIMITS.customModel);
+    updated.push('custom_model');
+  }
   await upsertSetting('ai', merged);
   return updated;
 }
 
-// ---- referral settings (register reward points) --------------------------
+// ---- AI runtime override (round 18) ---------------------------------------
+
+export interface AiRuntimeOverride {
+  key?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
+/**
+ * Reads the 'ai' document and returns ONLY non-empty override fields for the
+ * runtime AI call. The stored key applies to every provider; customBaseUrl /
+ * customModel apply ONLY to the OpenAI-compatible adapters — gemini/anthropic
+ * keep their fixed code-controlled URLs and models (§28).
+ */
+export async function resolveAiRuntimeOverride(provider: string): Promise<AiRuntimeOverride> {
+  const doc = await readSettingDoc('ai');
+  const out: AiRuntimeOverride = {};
+  const rawKey = doc['apiKey'];
+  if (typeof rawKey === 'string' && rawKey.trim() !== '') out.key = rawKey;
+  const p = provider.toLowerCase();
+  if (p === 'gemini' || p === 'anthropic') return out;
+  const rawBaseUrl = doc['customBaseUrl'];
+  if (typeof rawBaseUrl === 'string' && rawBaseUrl.trim() !== '') out.baseUrl = rawBaseUrl;
+  const rawModel = doc['customModel'];
+  if (typeof rawModel === 'string' && rawModel.trim() !== '') out.model = rawModel;
+  return out;
+}
+
+// ---- referral settings (register reward, first-purchase percent) ---------
 
 export interface ReferralSettings {
   registerRewardPoints: number;
+  enabled: boolean;
+  firstPurchasePercent: number;
 }
 
 export const REFERRAL_POINTS_MIN = 0;
 export const REFERRAL_POINTS_MAX = 100000;
-const REFERRAL_DEFAULTS: ReferralSettings = { registerRewardPoints: 100 };
+export const REFERRAL_PERCENT_MIN = 0;
+export const REFERRAL_PERCENT_MAX = 50;
+const REFERRAL_DEFAULTS: ReferralSettings = { registerRewardPoints: 100, enabled: true, firstPurchasePercent: 10 };
 
 export async function getReferralSettings(): Promise<ReferralSettings> {
-  const raw = (await readSettingDoc('referral'))['registerRewardPoints'];
+  const doc = await readSettingDoc('referral');
+  const s: ReferralSettings = { ...REFERRAL_DEFAULTS };
+  const rawPoints = doc['registerRewardPoints'];
   if (
-    typeof raw === 'number' &&
-    Number.isInteger(raw) &&
-    raw >= REFERRAL_POINTS_MIN &&
-    raw <= REFERRAL_POINTS_MAX
+    typeof rawPoints === 'number' &&
+    Number.isInteger(rawPoints) &&
+    rawPoints >= REFERRAL_POINTS_MIN &&
+    rawPoints <= REFERRAL_POINTS_MAX
   ) {
-    return { registerRewardPoints: raw };
+    s.registerRewardPoints = rawPoints;
   }
-  return { ...REFERRAL_DEFAULTS };
+  if (typeof doc['enabled'] === 'boolean') s.enabled = doc['enabled'];
+  const rawPercent = doc['firstPurchasePercent'];
+  if (
+    typeof rawPercent === 'number' &&
+    Number.isInteger(rawPercent) &&
+    rawPercent >= REFERRAL_PERCENT_MIN &&
+    rawPercent <= REFERRAL_PERCENT_MAX
+  ) {
+    s.firstPurchasePercent = rawPercent;
+  }
+  return s;
 }
 
 export interface ReferralSettingsPatch {
   registerRewardPoints?: number;
+  enabled?: boolean;
+  firstPurchasePercent?: number;
 }
 
 export async function putReferralSettings(patch: ReferralSettingsPatch): Promise<string[]> {
@@ -558,7 +674,91 @@ export async function putReferralSettings(patch: ReferralSettingsPatch): Promise
     merged['registerRewardPoints'] = v;
     updated.push('registerRewardPoints');
   }
+  if (patch.enabled !== undefined) {
+    merged['enabled'] = ensureDocBool(patch.enabled, 'enabled');
+    updated.push('enabled');
+  }
+  if (patch.firstPurchasePercent !== undefined) {
+    const v = patch.firstPurchasePercent;
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < REFERRAL_PERCENT_MIN || v > REFERRAL_PERCENT_MAX) {
+      throw new AppError(ERR.VALIDATION('درصد پاداش خرید اول باید عددی بین ۰ تا ۵۰ باشد.'));
+    }
+    merged['firstPurchasePercent'] = v;
+    updated.push('firstPurchasePercent');
+  }
   await upsertSetting('referral', merged);
+  return updated;
+}
+
+// ---- gold ticker bot defaults (asovin «تنظیمات ربات طلا» parity) ---------
+
+export interface GoldSettings {
+  defaultSourceUrl: string;
+  defaultFrequencyMinutes: number;
+  defaultTemplateFa: string;
+}
+
+const GOLD_DEFAULTS: GoldSettings = { defaultSourceUrl: '', defaultFrequencyMinutes: 60, defaultTemplateFa: '' };
+const GOLD_LIMITS = { defaultSourceUrl: 190, defaultTemplateFa: 2000 } as const;
+const GOLD_FREQUENCY_MIN = 15;
+const GOLD_FREQUENCY_MAX = 1440;
+
+export async function getGoldSettings(): Promise<GoldSettings> {
+  const doc = await readSettingDoc('gold');
+  const s: GoldSettings = { ...GOLD_DEFAULTS };
+  const rawUrl = doc['defaultSourceUrl'];
+  if (typeof rawUrl === 'string') s.defaultSourceUrl = rawUrl.trim().slice(0, GOLD_LIMITS.defaultSourceUrl);
+  const rawFreq = doc['defaultFrequencyMinutes'];
+  if (
+    typeof rawFreq === 'number' &&
+    Number.isInteger(rawFreq) &&
+    rawFreq >= GOLD_FREQUENCY_MIN &&
+    rawFreq <= GOLD_FREQUENCY_MAX
+  ) {
+    s.defaultFrequencyMinutes = rawFreq;
+  }
+  const rawTemplate = doc['defaultTemplateFa'];
+  if (typeof rawTemplate === 'string') s.defaultTemplateFa = rawTemplate.slice(0, GOLD_LIMITS.defaultTemplateFa);
+  return s;
+}
+
+export interface GoldSettingsPatch {
+  defaultSourceUrl?: string;
+  defaultFrequencyMinutes?: number;
+  defaultTemplateFa?: string;
+}
+
+export async function putGoldSettings(patch: GoldSettingsPatch): Promise<string[]> {
+  const merged = { ...(await readSettingDoc('gold')) };
+  const updated: string[] = [];
+  if (patch.defaultSourceUrl !== undefined) {
+    const v = ensureDocStr(patch.defaultSourceUrl, 'defaultSourceUrl', GOLD_LIMITS.defaultSourceUrl);
+    // Scheme-only validation here: the FULL SSRF check (assertSafeUrl) still
+    // happens on the user-side save paths in gold.service.saveGoldConfig.
+    if (v !== '' && !v.startsWith('https://')) {
+      throw new AppError(ERR.VALIDATION('آدرس منبع پیش‌فرض باید با https:// شروع شود.'));
+    }
+    merged['defaultSourceUrl'] = v;
+    updated.push('defaultSourceUrl');
+  }
+  if (patch.defaultFrequencyMinutes !== undefined) {
+    const v = patch.defaultFrequencyMinutes;
+    if (
+      typeof v !== 'number' ||
+      !Number.isInteger(v) ||
+      v < GOLD_FREQUENCY_MIN ||
+      v > GOLD_FREQUENCY_MAX
+    ) {
+      throw new AppError(ERR.VALIDATION('فاصلهٔ به‌روزرسانی پیش‌فرض باید بین ۱۵ تا ۱۴۴۰ دقیقه باشد.'));
+    }
+    merged['defaultFrequencyMinutes'] = v;
+    updated.push('defaultFrequencyMinutes');
+  }
+  if (patch.defaultTemplateFa !== undefined) {
+    merged['defaultTemplateFa'] = ensureDocStr(patch.defaultTemplateFa, 'defaultTemplateFa', GOLD_LIMITS.defaultTemplateFa);
+    updated.push('defaultTemplateFa');
+  }
+  await upsertSetting('gold', merged);
   return updated;
 }
 

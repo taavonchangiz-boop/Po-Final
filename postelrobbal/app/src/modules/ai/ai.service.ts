@@ -7,6 +7,7 @@ import { emitEvent } from '../../core/events.js';
 import { enqueue } from '../../queue/queues.js';
 import { assertWithinLimit } from '../subscriptions/plan.service.js';
 import { aiComplete, AI_PROVIDER_IDS } from '../../providers/ai/ai-providers.js';
+import { resolveAiRuntimeOverride } from '../admin/system-settings.service.js';
 
 /**
  * AI orchestration (§28): quota accounting (ai_usage_monthly), queue-backed
@@ -99,7 +100,9 @@ export async function requestAiCaption(tenantId: string, text: string): Promise<
 export async function aiProviderComplete(tenantId: string, system: string, user: string): Promise<string> {
   await consumeAiQuota(tenantId);
   const provider = await resolveProvider(undefined);
-  const result = await aiComplete(provider, { system, user, timeoutMs: 30_000, maxTokens: 500 });
+  // Round 18: admin-stored key/custom base URL/model override the env defaults.
+  const override = await resolveAiRuntimeOverride(provider);
+  const result = await aiComplete(provider, { system, user, timeoutMs: 30_000, maxTokens: 500 }, override);
   await countTokens(tenantId, (result.promptTokens ?? 0) + (result.completionTokens ?? 0));
   return result.text;
 }
@@ -111,12 +114,18 @@ export async function generateAiSync(
 ): Promise<{ text: string; provider: string }> {
   await consumeAiQuota(tenantId);
   const provider = await resolveProvider(undefined);
-  const result = await aiComplete(provider, {
-    ...(input.system ? { system: input.system } : {}),
-    user: input.text,
-    timeoutMs: 30_000,
-    maxTokens: 500,
-  });
+  // Round 18: admin-stored key/custom base URL/model override the env defaults.
+  const override = await resolveAiRuntimeOverride(provider);
+  const result = await aiComplete(
+    provider,
+    {
+      ...(input.system ? { system: input.system } : {}),
+      user: input.text,
+      timeoutMs: 30_000,
+      maxTokens: 500,
+    },
+    override
+  );
   await countTokens(tenantId, (result.promptTokens ?? 0) + (result.completionTokens ?? 0));
   return { text: result.text, provider };
 }

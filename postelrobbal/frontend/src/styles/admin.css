@@ -612,3 +612,419 @@
     overflow-y: auto;
   }
 }
+
+/* ===== round 18-b: admin bell + topbar clock ===== */
+/* Admin notification bell (.adm-bell) + popup (.adm-pop) + the shared
+   ClockChip now rendered in .adm-topbar__actions. Visual language mirrors
+   .adm-burger / .dash-iconbtn (ghost surface, 44px touch target); the badge
+   mirrors .dash-iconbtn__badge in shell.css. Token-only colors. */
+
+.adm-bell-wrap { position: relative; flex-shrink: 0; }
+.adm-bell {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.adm-bell:hover { background: var(--surface-2); color: var(--text); }
+.adm-bell__badge {
+  position: absolute;
+  top: -5px;
+  left: -5px; /* RTL: mirrors .dash-iconbtn__badge in shell.css */
+  background: var(--danger);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* popup — anchored to the bell's inline-start edge (left in the RTL topbar,
+   the bell sits leftmost in .adm-topbar__actions so it never overflows) */
+.adm-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  min-width: 320px;
+  max-width: 92vw;
+  max-height: min(70dvh, 520px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+  padding: 6px;
+  animation: shellPop 0.18s ease; /* keyframes from shell.css */
+}
+.adm-pop__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 9px;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 6px;
+}
+.adm-pop__head strong { font-size: 13.5px; font-weight: 800; }
+.adm-pop__head > span { font-size: 11.5px; color: var(--text-2); white-space: nowrap; flex-shrink: 0; }
+
+.adm-pop__section { padding: 2px; }
+.adm-pop__section + .adm-pop__section { margin-top: 2px; }
+.adm-pop__section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 5px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.adm-pop__count {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-radius: 999px;
+  font-size: 10.5px;
+  padding: 1px 8px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.adm-pop__item {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--text);
+  transition: background 0.15s ease;
+}
+.adm-pop__item:hover { background: var(--surface-2); }
+.adm-pop__item strong {
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adm-pop__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.adm-pop__time { font-size: 11px; color: var(--text-2); white-space: nowrap; flex-shrink: 0; }
+.adm-pop__item .adm-pop__sub {
+  font-size: 11.5px;
+  color: var(--text-2);
+  direction: ltr; /* subs are typically emails */
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adm-pop__amount { font-size: 11.5px; font-weight: 700; color: var(--brand-strong); }
+.adm-pop__empty {
+  margin: 0;
+  padding: 20px 12px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.adm-pop__more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-top: 1px dashed var(--border);
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--brand-strong);
+}
+.adm-pop__more:hover { background: var(--brand-soft); color: var(--brand-strong); }
+
+@media (max-width: 640px) {
+  /* popup becomes a fixed sheet under the topbar — never overflows the
+     viewport (the topbar's backdrop-filter is its containing block, and the
+     topbar is sticky top:0, so 64px tracks the viewport top) */
+  .adm-pop {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: 64px;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: calc(100dvh - 80px);
+  }
+  /* clock shows time only on small screens (mirrors shell.css ≤960 rule) */
+  .adm-topbar .dash-clock__date,
+  .adm-topbar .dash-clock__sep { display: none; }
+}
+
+/* ===== round 18-c: tickets + profile360 + settings groups ===== */
+/* New in round 18-c ONLY — everything above (incl. the 18-b bell block)
+   must stay untouched. Token colors only, no new literals. */
+
+/* ---------- labeled fieldset groups (asovin-style settings) ---------- */
+
+.adm-fset {
+  border: 0;
+  margin: 0 0 20px;
+  min-width: 0;
+  padding: 0;
+}
+.adm-fset:last-child { margin-bottom: 0; }
+.adm-fset legend {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text);
+  padding: 0;
+  margin-bottom: 6px;
+}
+.adm-fset__desc {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.9;
+  margin: 0 0 12px;
+}
+
+/* inline ghost link inside notes (e.g. «لغو پاک‌سازی») */
+.adm-linkbtn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.adm-linkbtn:hover { opacity: 0.8; }
+
+/* count pill inside filter chips (tickets state chips) */
+.adm-chip__count {
+  background: var(--surface-2);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 8px;
+  line-height: 1.8;
+  font-variant-numeric: tabular-nums;
+}
+.adm-chip.is-active .adm-chip__count { background: rgba(99, 102, 241, 0.16); }
+
+/* ---------- settings hub groups (round 18-c categorization) ---------- */
+
+.adm-settings-group { min-width: 0; }
+.adm-settings-group .adm-subhead { margin-top: 4px; }
+.adm-settings-group + .adm-settings-group { margin-top: 14px; }
+
+/* ---------- admin tickets: conversation modal ---------- */
+
+.adm-ticket-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 12px;
+}
+.adm-ticket-head__who { display: grid; gap: 1px; min-width: 0; }
+.adm-ticket-head__who strong { font-size: 13.5px; }
+.adm-ticket-head__who span { font-size: 11.5px; color: var(--text-2); }
+.adm-ticket-head__side { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.adm-ticket-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 380px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px;
+}
+.adm-ticket-thread__empty {
+  margin: 0;
+  text-align: center;
+  color: var(--text-2);
+  font-size: 12.5px;
+  padding: 20px 0;
+}
+
+.adm-ticket-msg {
+  align-self: flex-end; /* USER / SYSTEM bubbles on the far side (RTL) */
+  max-width: 85%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+}
+.adm-ticket-msg--staff {
+  align-self: flex-start; /* SUPPORT / SUPER_ADMIN = our side */
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+.adm-ticket-msg__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.adm-ticket-msg__meta strong { color: var(--text); font-size: 12px; }
+.adm-ticket-msg--staff .adm-ticket-msg__meta strong { color: var(--brand-strong); }
+.adm-ticket-msg__body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.adm-ticket-msg__attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand-strong);
+  overflow-wrap: anywhere;
+}
+.adm-ticket-msg__attach:hover { text-decoration: underline; }
+
+/* ---------- پروفایل ۳۶۰ درجه modal ---------- */
+
+.adm-p360 { display: block; min-width: 0; }
+
+.adm-p360__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 14px;
+}
+.adm-p360__id { display: grid; gap: 3px; min-width: 0; }
+.adm-p360__id h3 { margin: 0; font-size: 16px; font-weight: 800; }
+.adm-p360__id > span { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.adm-p360__badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+
+.adm-p360__sub-box {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  background: var(--brand-soft);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  color: var(--brand-strong);
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.adm-p360__sub-box--muted {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-2);
+}
+.adm-p360__sub-box--warning {
+  background: var(--warning-soft);
+  border-color: rgba(217, 119, 6, 0.25);
+  color: var(--warning);
+}
+.adm-p360__sub-warn { font-weight: 700; }
+
+.adm-p360__biz {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-bottom: 6px;
+}
+.adm-p360__biz-item {
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 8px 12px;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.adm-p360__biz-label { font-size: 11px; color: var(--text-2); }
+.adm-p360__biz-value { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+
+.adm-p360-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.adm-p360__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 10px;
+  min-width: 0;
+}
+.adm-p360__tile-emoji { font-size: 18px; line-height: 1.4; }
+.adm-p360__tile-label { font-size: 11.5px; color: var(--text-2); }
+.adm-p360__tile strong { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.adm-p360__tile-sub { font-size: 11px; color: var(--text-2); }
+
+.adm-p360__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-top: 1px dashed var(--border);
+  padding-top: 14px;
+  margin-top: 16px;
+}
+/* success-tone gift button (token colors only) */
+.adm-p360__actions .btn-soft.adm-p360__gift {
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid rgba(22, 163, 74, 0.25);
+}
+.adm-p360__actions .btn-soft.adm-p360__gift:hover:not(:disabled) {
+  background: var(--success-soft);
+  color: var(--success);
+  filter: brightness(0.97);
+}
+
+/* ---------- mobile collapses ---------- */
+
+@media (max-width: 640px) {
+  .adm-p360__biz { grid-template-columns: 1fr; }
+  .adm-ticket-msg { max-width: 95%; }
+}
+
+@media (max-width: 480px) {
+  .adm-p360-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ===== round 18-h: mobile topbar decongestion (clock hidden ≤560px, title priority) ===== */
+@media (max-width: 560px) {
+  .adm-topbar .dash-clock { display: none; }
+}

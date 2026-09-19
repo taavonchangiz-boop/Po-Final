@@ -8,6 +8,7 @@ import { AI_PROVIDER_IDS } from '../../providers/ai/ai-providers.js';
 import {
   getOverview,
   listUsers,
+  getUserProfile360,
   setUserSuspended,
   grantSubscription,
   listAdminPayments,
@@ -27,6 +28,14 @@ import {
   listBots,
   type AdminPlatform,
 } from './admin.service.js';
+import { getAdminBellSnapshot, markAdminBellSeen } from './admin-bell.service.js';
+import {
+  adminListTickets,
+  adminGetTicket,
+  adminAddTicketMessage,
+  adminCloseTicket,
+  TICKET_CATEGORIES,
+} from '../support/support.service.js';
 import {
   getPaymentSettings,
   putPaymentSettings,
@@ -48,6 +57,8 @@ import {
   putReferralSettings,
   getSecuritySettings,
   putSecuritySettings,
+  getGoldSettings,
+  putGoldSettings,
 } from './system-settings.service.js';
 
 function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
@@ -212,22 +223,80 @@ const generalPutSchema = z
       .refine((v) => v === '' || v.includes('@'), { message: 'ایمیل معتبر نیست.' })
       .optional(),
     supportPhone: z.string().max(20).optional(),
+    supportTelegramUrl: z
+      .string()
+      .max(190)
+      .refine((v) => v === '' || v.startsWith('https://'), {
+        message: 'آدرس تلگرام باید با https:// شروع شود.',
+      })
+      .optional(),
+    supportBaleUrl: z
+      .string()
+      .max(190)
+      .refine((v) => v === '' || v.startsWith('https://'), {
+        message: 'آدرس بله باید با https:// شروع شود.',
+      })
+      .optional(),
     termsNoteFa: z.string().max(300).optional(),
     maintenanceEnabled: z.boolean().optional(),
     maintenanceMessageFa: z.string().max(300).optional(),
   })
   .strict();
 const aiPutSchema = z
-  .object({ default_provider: z.enum(AI_PROVIDER_IDS).optional() })
+  .object({
+    default_provider: z.enum(AI_PROVIDER_IDS).optional(),
+    // api_key is write-only: never echoed back by any GET (masked snapshot).
+    api_key: z.string().max(190).optional(),
+    custom_base_url: z
+      .string()
+      .max(190)
+      .refine((v) => v === '' || v.startsWith('https://'), {
+        message: 'آدرس سفارشی هوش مصنوعی باید با https:// شروع شود.',
+      })
+      .optional(),
+    custom_model: z.string().max(80).optional(),
+  })
   .strict();
 const referralPutSchema = z
-  .object({ registerRewardPoints: z.number().int().min(0).max(100000).optional() })
+  .object({
+    registerRewardPoints: z.number().int().min(0).max(100000).optional(),
+    enabled: z.boolean().optional(),
+    firstPurchasePercent: z.number().int().min(0).max(50).optional(),
+  })
   .strict();
 const securityPutSchema = z
   .object({
     registrationEnabled: z.boolean().optional(),
     captchaEnabled: z.boolean().optional(),
   })
+  .strict();
+// Gold ticker bot defaults (round 18) — admin PUT validates the https://
+// scheme only; the full SSRF check stays on the user-side save paths.
+const goldPutSchema = z
+  .object({
+    defaultSourceUrl: z
+      .string()
+      .max(190)
+      .refine((v) => v === '' || v.startsWith('https://'), {
+        message: 'آدرس منبع پیش‌فرض باید با https:// شروع شود.',
+      })
+      .optional(),
+    defaultFrequencyMinutes: z.number().int().min(15).max(1440).optional(),
+    defaultTemplateFa: z.string().max(2000).optional(),
+  })
+  .strict();
+
+// ---- admin support tickets (round 18) ----
+const adminTicketsQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).optional(),
+    pageSize: z.coerce.number().int().min(1).max(100).optional(),
+    state: z.enum(['OPEN', 'ANSWERED', 'CLOSED']).optional(),
+    search: z.string().max(190).optional(),
+  })
+  .strict();
+const adminTicketReplySchema = z
+  .object({ body: z.string().min(1).max(5000) })
   .strict();
 
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
@@ -240,6 +309,19 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/admin/overview', access, async () => {
     const data = await getOverview();
+    return { success: true, data };
+  });
+
+  // ---- admin bell (round 18, asovin «اعلان‌های سیستمی مدیر» parity) ----
+  app.get('/admin/notifications/bell', access, async () => {
+    const data = await getAdminBellSnapshot();
+    return { success: true, data };
+  });
+
+  app.post('/admin/notifications/bell/seen', access, async () => {
+    // No audit: this is a high-frequency UI marker (opening the bell popup),
+    // not a state change — an audit row per popup would flood audit_logs.
+    const data = await markAdminBellSeen();
     return { success: true, data };
   });
 
@@ -266,6 +348,46 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const { page, pageSize } = paging(q);
     const data = await listUsers(q.search, page, pageSize);
     return { success: true, data };
+  });
+
+  // ---- user 360° profile (round 18, asovin «پروفایل ۳۶۰ درجه» parity) ----
+  app.get('/admin/users/:id/profile360', access, async (req) => {
+    const data = await getUserProfile360(paramId(req));
+    return { success: true, data };
+  });
+
+  // ---- admin support tickets (round 18) ----
+  app.get('/admin/support/tickets', access, async (req) => {
+    const input = parse(adminTicketsQuerySchema, req.query ?? {});
+    const data = await adminListTickets({
+      state: input.state,
+      search: input.search,
+      page: input.page ?? 1,
+      pageSize: input.pageSize ?? 20,
+    });
+    return { success: true, data: { ...data, categories: TICKET_CATEGORIES } };
+  });
+
+  app.get('/admin/support/tickets/:id', access, async (req) => {
+    const data = await adminGetTicket(paramId(req));
+    return { success: true, data };
+  });
+
+  app.post('/admin/support/tickets/:id/messages', access, async (req) => {
+    const me = auth(req);
+    const id = paramId(req);
+    const input = parse(adminTicketReplySchema, req.body);
+    await adminAddTicketMessage(id, { id: me.id, role: me.role as 'SUPER_ADMIN' | 'SUPPORT' }, input.body);
+    await audit({ action: 'admin.ticket_reply', actorId: me.id, actorRole: me.role, subjectType: 'ticket', subjectId: id, ip: req.ip });
+    return { success: true, data: { ok: true } };
+  });
+
+  app.post('/admin/support/tickets/:id/close', access, async (req) => {
+    const me = auth(req);
+    const id = paramId(req);
+    await adminCloseTicket(id, { id: me.id, role: me.role as 'SUPER_ADMIN' | 'SUPPORT' });
+    await audit({ action: 'admin.ticket_close', actorId: me.id, actorRole: me.role, subjectType: 'ticket', subjectId: id, ip: req.ip });
+    return { success: true, data: { ok: true } };
   });
 
   app.post('/admin/users/:id/suspend', usersManage, async (req) => {
@@ -608,6 +730,21 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const keys = await putSecuritySettings(input);
     await audit({ action: 'admin.settings_updated', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { keys } });
     const data = await getSecuritySettings();
+    return { success: true, data };
+  });
+
+  // ---- gold ticker defaults (round 18, asovin «تنظیمات ربات طلا» parity) ----
+  app.get('/admin/settings/gold', settingsManage, async () => {
+    const data = await getGoldSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/gold', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(goldPutSchema, req.body);
+    const keys = await putGoldSettings(input);
+    await audit({ action: 'admin.settings_updated', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { keys } });
+    const data = await getGoldSettings();
     return { success: true, data };
   });
 

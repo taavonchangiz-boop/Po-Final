@@ -16,6 +16,7 @@ import { activateSubscriptionTx } from '../subscriptions/plan.service.js';
 import type { Tx } from '../subscriptions/plan.service.js';
 import { moveMoneyTx, pointCreditTx } from '../wallet/wallet.service.js';
 import { getPaymentSettings } from './payment-settings.service.js';
+import { getReferralSettings } from '../admin/system-settings.service.js';
 
 export const POINT_TO_RIAL = 10; // ۱ امتیاز = ۱۰ ریال
 const WALLET_TOPUP_MIN = 100_000; // Rial
@@ -312,17 +313,31 @@ export interface CallbackResult {
 }
 
 /**
- * Referral first-purchase hook (§36): ۱۰٪ of the payment as POINTS for the
- * referrer, exactly-once per referral via uq_referral_rewards. Must never
- * break the payment path — every failure is swallowed and logged.
+ * Referral first-purchase hook (§36): a configured PERCENT of the payment as
+ * POINTS for the referrer (round 17 hardcoded 10%), exactly-once per referral
+ * via uq_referral_rewards. Honors the round-18 master referral toggle.
+ * Must never break the payment path — every failure is swallowed and logged.
  */
 export async function referralHookFirstPurchase(tenantId: string, amountRial: number, tx?: Tx): Promise<void> {
+  // Best-effort settings read (plain read on system_settings — no locks the
+  // surrounding payment transaction could conflict with). On any failure the
+  // built-in defaults (enabled=true, 10%) keep the historical behavior.
+  let referralEnabled = true;
+  let percent = 10;
+  try {
+    const settings = await getReferralSettings();
+    referralEnabled = settings.enabled;
+    percent = settings.firstPurchasePercent;
+  } catch {
+    // settings read failure must NOT fail the payment — fall back to defaults
+  }
+  if (!referralEnabled) return; // master toggle off → no reward at all
   try {
     if (tx) {
-      await applyFirstPurchaseReward(tx, tenantId, amountRial);
+      await applyFirstPurchaseReward(tx, tenantId, amountRial, percent);
     } else {
       const db = getDb();
-      await db.transaction((t) => applyFirstPurchaseReward(t, tenantId, amountRial));
+      await db.transaction((t) => applyFirstPurchaseReward(t, tenantId, amountRial, percent));
     }
   } catch (err) {
     // The referral reward is best-effort; it must never fail the payment.
@@ -332,7 +347,7 @@ export async function referralHookFirstPurchase(tenantId: string, amountRial: nu
   }
 }
 
-async function applyFirstPurchaseReward(tx: Tx, tenantId: string, amountRial: number): Promise<void> {
+async function applyFirstPurchaseReward(tx: Tx, tenantId: string, amountRial: number, percent: number): Promise<void> {
   const [referral] = await tx
     .select()
     .from(referrals)
@@ -340,7 +355,7 @@ async function applyFirstPurchaseReward(tx: Tx, tenantId: string, amountRial: nu
     .limit(1);
   if (!referral) return;
 
-  const points = Math.floor((amountRial * 0.1) / POINT_TO_RIAL); // ۱۰٪ پرداخت به امتیاز
+  const points = Math.floor((amountRial * percent) / 100 / POINT_TO_RIAL); // درصد پاداش خرید اول به امتیاز
   if (points <= 0) return;
 
   try {

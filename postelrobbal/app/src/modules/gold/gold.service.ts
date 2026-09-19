@@ -6,6 +6,7 @@ import { AppError, ERR } from '../../core/errors.js';
 import { httpRaw, assertSafeUrl } from '../../core/http.js';
 import { outboxRow } from '../../core/outbox.js';
 import { getPlanContext } from '../subscriptions/plan.service.js';
+import { getGoldSettings } from '../admin/system-settings.service.js';
 
 /**
  * Gold ticker (§29): scheduled price scraping → tolerant parser → snapshot →
@@ -88,16 +89,29 @@ export async function getGoldConfig(tenantId: string): Promise<GoldConfigDto> {
   await requireGoldFeature(tenantId);
   const db = getDb();
   const [row] = await db.select().from(goldConfigs).where(eq(goldConfigs.tenantId, tenantId)).limit(1);
-  if (row) return toDto(row);
+  if (row) return toDto(row); // existing rows keep their own values — unchanged behavior
   // Lazy default row so the settings form is immediately editable.
+  // Round 18: the admin-configured defaults (system_settings key 'gold') win
+  // when non-empty; otherwise the built-in constants below apply.
+  let sourceUrl = DEFAULT_SOURCE_URL;
+  let template = DEFAULT_TEMPLATE;
+  let frequencyMinutes = 60;
+  try {
+    const admin = await getGoldSettings();
+    if (admin.defaultSourceUrl !== '') sourceUrl = admin.defaultSourceUrl;
+    if (admin.defaultTemplateFa !== '') template = admin.defaultTemplateFa;
+    frequencyMinutes = admin.defaultFrequencyMinutes;
+  } catch {
+    // settings read failure → built-in defaults (never block the user form)
+  }
   const id = newId();
   await db.insert(goldConfigs).values({
     id,
     tenantId,
-    sourceUrl: DEFAULT_SOURCE_URL,
-    templateText: DEFAULT_TEMPLATE,
+    sourceUrl,
+    templateText: template,
     channelIds: [],
-    frequencyMinutes: 60,
+    frequencyMinutes,
     timezone: 'Asia/Tehran',
     changeOnly: 1,
     isEnabled: 0,

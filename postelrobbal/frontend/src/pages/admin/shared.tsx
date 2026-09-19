@@ -60,6 +60,8 @@ export const AUDIT_ACTION_FA: Record<string, string> = {
   'admin.plan_deleted': 'حذف پلن',
   'admin.settings_updated': 'به‌روزرسانی تنظیمات',
   'admin.broadcast': 'ارسال همگانی',
+  'admin.ticket_reply': 'پاسخ مدیر به تیکت',
+  'admin.ticket_close': 'بستن تیکت توسط مدیر',
   'admin.channel_released': 'آزادسازی کانال',
   'bot.connect': 'اتصال ربات',
   'bot.enable': 'فعال‌سازی ربات',
@@ -82,6 +84,33 @@ export const AUDIT_ACTION_FA: Record<string, string> = {
   'subscription.activate': 'فعال‌سازی اشتراک',
   'payment.verified': 'تأیید پرداخت',
 };
+
+/* Ticket states — admin-side labels (round 18-c). The user-side Support page
+   keeps its own friendlier map in lib/format; the admin list uses «باز / پاسخ
+   داده‌شده / بسته» per the asovin-style chips. */
+export const TICKET_STATE_FA: Record<string, string> = {
+  OPEN: 'باز',
+  ANSWERED: 'پاسخ داده‌شده',
+  CLOSED: 'بسته',
+};
+
+export type StatusTone = 'success' | 'danger' | 'warning' | 'info' | 'brand' | 'muted';
+
+/** Shared state→tone mapping for badges/pills (mirrors StatusBadge's map;
+ *  falls back to muted for unknown states). */
+export function statusTone(state: string): StatusTone {
+  const map: Record<string, StatusTone> = {
+    OPEN: 'warning',
+    ANSWERED: 'success',
+    CLOSED: 'muted',
+    ACTIVE: 'success',
+    SUSPENDED: 'danger',
+    PENDING: 'warning',
+    FAILED: 'danger',
+    ERROR: 'danger',
+  };
+  return map[state] ?? 'muted';
+}
 
 /** Extract the server Persian message from an ApiRequestError, else fallback. */
 export function errText(err: unknown, fallback: string): string {
@@ -264,6 +293,7 @@ export const ADMIN_SECTIONS: AdminSectionGroup[] = [
     items: [
       { to: '/dashboard/admin/sms', icon: 'notifications', label: 'پیامک', short: 'پیامک' },
       { to: '/dashboard/admin/email', icon: 'posts', label: 'ایمیل', short: 'ایمیل' },
+      { to: '/dashboard/admin/tickets', icon: 'support', label: 'تیکت‌های پشتیبانی', short: 'تیکت‌ها' },
       { to: '/dashboard/admin/broadcast', icon: 'more', label: 'اطلاع‌رسانی', short: 'اطلاع‌رسانی' },
     ],
   },
@@ -273,6 +303,7 @@ export const ADMIN_SECTIONS: AdminSectionGroup[] = [
       { to: '/dashboard/admin/settings', icon: 'settings', label: 'مرکز تنظیمات', short: 'تنظیمات', end: true },
       { to: '/dashboard/admin/settings/general', icon: 'home', label: 'تنظیمات عمومی', short: 'عمومی' },
       { to: '/dashboard/admin/settings/ai', icon: 'ai', label: 'هوش مصنوعی', short: 'هوش مصنوعی' },
+      { to: '/dashboard/admin/settings/gold', icon: 'gold', label: 'ربات طلا و سکه', short: 'طلا' },
       { to: '/dashboard/admin/settings/referral', icon: 'referrals', label: 'زیرمجموعه‌گیری', short: 'زیرمجموعه' },
       { to: '/dashboard/admin/settings/security', icon: 'admin', label: 'امنیت', short: 'امنیت' },
       { to: '/dashboard/admin/logs', icon: 'analytics', label: 'گزارش رویداد', short: 'رویدادها' },
