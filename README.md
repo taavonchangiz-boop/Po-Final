@@ -12,9 +12,9 @@ Independent SaaS rebuild from frozen read-only reference audits (`audits/`). Ver
                        ┌────────────────────────────── cPanel host (shared) ─────────────────────────────┐
  Browser ──HTTPS──► public_html/  (Vite SPA build: index.html + assets — 0 Node processes)             │
      │                    │ .htaccess maps /api ──► Passenger ──► postelrobbal/api/app.js             │
-     │                    │                                   └──► app/dist/server.js  (API ×1)       │
+     │                    │                                   └──► postelrobbal/app/dist/server.js  (API ×1)       │
      └──Bot webhooks──────┘► /api/v1/webhooks/*            postelrobbal/workers/worker.js (Worker ×1)   │
-                                                           postelrobbal/workers/scheduler.js (cron tick)│
+                                                           postelrobbal/scheduler/scheduler.js (cron tick)│
                                                            postelrobbal/config/.env (chmod 600)         │
                                                            postelrobbal/private|storage|logs            │
                        └──────────────────────────────────────────────────────────────────────────────┘
@@ -24,7 +24,7 @@ Independent SaaS rebuild from frozen read-only reference audits (`audits/`). Ver
                         BullMQ queues: delivery · bot-events · ai-jobs · notifications · maintenance
 ```
 
-- **API** — Fastify 5 + TypeScript (Node ≥22), modules under `app/src/modules/*`, all routes under `/api/v1`, cookie sessions + CSRF, unified Persian-safe error contract.
+- **API** — Fastify 5 + TypeScript (Node ≥22), modules under `postelrobbal/app/src/modules/*`, all routes under `/api/v1`, cookie sessions + CSRF, unified Persian-safe error contract.
 - **Worker** — single BullMQ worker set (delivery, bot events, AI jobs, notifications, maintenance), bounded concurrency.
 - **Scheduler** — tick model: cron fires every minute, it acquires a Redis lock (`SET NX EX 55`), claims due work into queues, relays the transactional outbox, exits.
 - **Frontend** — Vite + React 18 + TS SPA, Persian-only UI, static output served by the web server (no Node).
@@ -36,11 +36,11 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) · decisions: [docs/adr/](docs/adr/)
 
 | Path | What it is |
 |---|---|
-| `app/` | Fastify API + worker + scheduler (`src/` TS, `dist/` built JS). Entries: `server.ts`, `worker.ts`, `scheduler.ts` |
-| `frontend/` | Vite React SPA (`src/`, built to `dist/`, Persian RTL) |
+| `postelrobbal/app/` | Fastify API + worker + scheduler (`src/` TS, `dist/` built JS). Entries: `server.ts`, `worker.ts`, `scheduler.ts` |
+| `postelrobbal/frontend/` | Vite React SPA (`src/`, built to `dist/`, Persian RTL) |
 | `wordpress-plugin/postyar-connector/` | Official WP/WooCommerce connector plugin (see [WORDPRESS.md](WORDPRESS.md) for current status) |
-| `database/migrations/` | Ordered MySQL migrations (`0001_init.sql`, `0002_seed.sql`), applied by the deterministic runner |
-| `scripts/` | `deploy.sh` (idempotent prod deploy), `release-check.sh` (release gate), `make-release.sh` (zip + SHA256SUMS) |
+| `postelrobbal/database/migrations/` | Ordered MySQL migrations (`0001_init.sql`, `0002_seed.sql`), applied by the deterministic runner |
+| `postelrobbal/scripts/` | `deploy.sh` (idempotent prod deploy), `release-check.sh` (release gate), `make-release.sh` (zip + SHA256SUMS) |
 | `docs/adr/` | 12 architecture decision records |
 | `audits/` | Forensic audits of the reference systems (read-only research corpus) |
 | `assets/brand/` | Vazirmatn fonts, PWA icons, logos (canonical brand kit) |
@@ -57,12 +57,12 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) · decisions: [docs/adr/](docs/adr/)
 
 ```bash
 # 1. Environment
-cd app && cp ../.env.example .env     # fill DATABASE_URL, REDIS_URL, secrets (32+/64-hex)
+cd postelrobbal/app && cp ../.env.example .env     # fill DATABASE_URL, REDIS_URL, secrets (32+/64-hex)
 #    Local defaults: APP_URL=http://localhost:5173, API_URL=http://localhost:3000
 
 # 2. Install + migrate
 bun install
-bun run migrate                      # applies database/migrations/*.sql exactly once
+bun run migrate                      # applies postelrobbal/database/migrations/*.sql exactly once
 
 # 3. Run the four processes (separate terminals)
 bun run dev                          # API          → http://localhost:3000
@@ -76,16 +76,16 @@ Ports: API `3000` (`PORT`), frontend dev `5173`. The scheduler is a **tick** bin
 ## Build & test
 
 ```bash
-cd app        && bun run typecheck && bun run build   # tsc --noEmit, then dist/
-cd frontend   && bun run build                        # tsc --noEmit && vite build → dist/
-cd app        && bun test                             # vitest run (DB-free unit tests)
+cd postelrobbal/app        && bun run typecheck && bun run build   # tsc --noEmit, then dist/
+cd postelrobbal/frontend   && bun run build                        # tsc --noEmit && vite build → dist/
+cd postelrobbal/app        && bun test                             # vitest run (DB-free unit tests)
 ```
 
 CI (`.github/workflows/ci.yml`) runs typechecks, frontend build, unit tests, a security scan, and `php -l` over the WP plugin. Deployment is **manual**, never from CI.
 
 ## Deployment
 
-Production deploys use `scripts/deploy.sh` on the cPanel host (preflight → artifacts → migrations → Passenger restart → health). Packaging (`scripts/make-release.sh`) produces `postyar-production-final.zip` + `SHA256SUMS`. Full runbook: **[DEPLOYMENT.md](DEPLOYMENT.md)**; day-2 ops: **[OPERATIONS.md](OPERATIONS.md)**; diagnostics: **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**.
+Production deploys use `postelrobbal/scripts/deploy.sh` on the cPanel host (preflight → artifacts → migrations → Passenger restart → health). Packaging (`postelrobbal/scripts/make-release.sh`) produces `postyar-production-final.zip` + `SHA256SUMS`. Full runbook: **[DEPLOYMENT.md](DEPLOYMENT.md)**; day-2 ops: **[OPERATIONS.md](OPERATIONS.md)**; diagnostics: **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**.
 
 ## Security notes
 

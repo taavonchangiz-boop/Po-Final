@@ -17,6 +17,8 @@
 #   scripts/deploy.sh [--build]
 #     --build   Build app + frontend on THIS machine before deploying
 #               (use only on a build box, never on the shared prod host).
+#               The frontend build is synced into the release public_html/ so
+#               the committed public tree and the deployed one never diverge.
 #
 # Overridable locations (env):
 #   POSTYAR_RELEASE   release tree root           (default: parent of scripts/)
@@ -27,7 +29,7 @@ set -euo pipefail
 
 # ------------------------------------------------------------------ locations
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RELEASE_DIR="${POSTYAR_RELEASE:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+RELEASE_DIR="${POSTYAR_RELEASE:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 APP_HOME="${POSTYAR_HOME:-${HOME}/postelrobbal}"
 PUBLIC_HTML="${PUBLIC_HTML:-${HOME}/public_html}"
 ENV_FILE="${APP_HOME}/config/.env"
@@ -71,22 +73,23 @@ preflight() {
 
   if [ "${BUILD_MODE}" -eq 1 ]; then
     log "--build requested: building on this machine"
-    (cd "${RELEASE_DIR}/app" && bun install --frozen-lockfile && bun run build) \
+    (cd "${RELEASE_DIR}/postelrobbal/app" && bun install --frozen-lockfile && bun run build) \
       || die "app build failed (bun install + bun run build)."
-    (cd "${RELEASE_DIR}/frontend" && bun install --frozen-lockfile && bun run build) \
-      || die "frontend build failed (bun install + bun run build)."
+    (cd "${RELEASE_DIR}/postelrobbal/frontend" && bun install --frozen-lockfile \
+      && bunx vite build --outDir "${RELEASE_DIR}/public_html" --emptyOutDir) \
+      || die "frontend build failed (bun install + vite build into public_html)."
   fi
 
-  [ -f "${RELEASE_DIR}/app/dist/server.js" ] || die \
-    "app/dist missing. Build in CI (or run scripts/deploy.sh --build on a build box). Never build TypeScript on the prod shared host by default."
-  [ -f "${RELEASE_DIR}/frontend/dist/index.html" ] || die \
-    "frontend/dist missing. Build in CI (bun run build in frontend/), then re-run deploy."
-  ok "Build artifacts present (app/dist, frontend/dist)"
+  [ -f "${RELEASE_DIR}/postelrobbal/app/dist/server.js" ] || die \
+    "postelrobbal/app/dist missing. Build in CI (or run scripts/deploy.sh --build on a build box). Never build TypeScript on the prod shared host by default."
+  [ -f "${RELEASE_DIR}/public_html/index.html" ] || die \
+    "public_html/index.html missing. Build the SPA in CI (vite build into public_html/), then re-run deploy."
+  ok "Build artifacts present (postelrobbal/app/dist, public_html)"
 
   # Runtime dependencies live with the deployed app (postelrobbal/app).
   log "Installing production dependencies into ${APP_HOME}/app (idempotent)"
-  cp "${RELEASE_DIR}/app/package.json" "${APP_HOME}/app/package.json"
-  cp "${RELEASE_DIR}/app/bun.lock" "${APP_HOME}/app/bun.lock" 2>/dev/null || true
+  cp "${RELEASE_DIR}/postelrobbal/app/package.json" "${APP_HOME}/app/package.json"
+  cp "${RELEASE_DIR}/postelrobbal/app/bun.lock" "${APP_HOME}/app/bun.lock" 2>/dev/null || true
   if [ ! -d "${APP_HOME}/app/node_modules" ]; then
     command -v bun >/dev/null 2>&1 || die "bun not found and node_modules missing; install bun or ship node_modules."
     (cd "${APP_HOME}/app" && bun install --frozen-lockfile --production) || die "dependency install failed."
@@ -168,11 +171,11 @@ ship_artifacts() {
 
   command -v rsync >/dev/null 2>&1 || die "rsync is required on the server."
 
-  # Frontend SPA → public_html (guarded --delete: only wipe a dir that is a
-  # previously deployed Postyar SPA or an empty target; never clobber foreign content).
+  # Frontend SPA → public_html. The release tree ships public_html/ already
+  # built (committed), so this is a plain guarded copy — no build on the host.
   if [ -d "${PUBLIC_HTML}" ]; then
     if [ -f "${PUBLIC_HTML}/.postyar-deployed" ] || [ -z "$(ls -A "${PUBLIC_HTML}" 2>/dev/null)" ]; then
-      rsync -a --delete "${RELEASE_DIR}/frontend/dist/" "${PUBLIC_HTML}/"
+      rsync -a --delete "${RELEASE_DIR}/public_html/" "${PUBLIC_HTML}/"
       touch "${PUBLIC_HTML}/.postyar-deployed"
       ok "SPA deployed to ${PUBLIC_HTML} (rsync --delete, guarded)"
     else
@@ -180,42 +183,26 @@ ship_artifacts() {
     fi
   else
     mkdir -p "${PUBLIC_HTML}"
-    rsync -a --delete "${RELEASE_DIR}/frontend/dist/" "${PUBLIC_HTML}/"
+    rsync -a --delete "${RELEASE_DIR}/public_html/" "${PUBLIC_HTML}/"
     touch "${PUBLIC_HTML}/.postyar-deployed"
     ok "SPA deployed to ${PUBLIC_HTML} (fresh)"
   fi
 
   # Backend build → postelrobbal/app
-  rsync -a --delete "${RELEASE_DIR}/app/dist/" "${APP_HOME}/app/dist/"
+  rsync -a --delete "${RELEASE_DIR}/postelrobbal/app/dist/" "${APP_HOME}/app/dist/"
   ok "Backend dist deployed to ${APP_HOME}/app/dist"
 
   # Migrations must travel with the release (apply-existing-migrations policy).
   mkdir -p "${APP_HOME}/database"
-  rsync -a --delete "${RELEASE_DIR}/database/migrations/" "${APP_HOME}/database/migrations/"
+  rsync -a --delete "${RELEASE_DIR}/postelrobbal/database/migrations/" "${APP_HOME}/database/migrations/"
   ok "Migrations synced to ${APP_HOME}/database/migrations"
 
-  # Passenger API entry (CommonJS shim that boots the ESM Fastify server).
-  cat > "${APP_HOME}/api/app.js" <<'EOF'
-// Postyar Passenger entry (generated by scripts/deploy.sh — do not edit).
-// Passenger provides PORT; the Fastify server binds 0.0.0.0:PORT.
-const path = require('path');
-require(path.join(__dirname, '..', 'app', 'dist', 'server.js'));
-EOF
-  ok "Passenger entry written: ${APP_HOME}/api/app.js"
-
-  # Worker + scheduler launchers (started by cron, never auto-spawned here).
-  # Absolute requires keep resolution safe under cron's minimal environment.
-  cat > "${APP_HOME}/workers/worker.js" <<EOF
-// Postyar worker entry shim (generated by scripts/deploy.sh — do not edit).
-process.chdir('${APP_HOME}/app');
-require('${APP_HOME}/app/dist/worker.js');
-EOF
-  cat > "${APP_HOME}/workers/scheduler.js" <<EOF
-// Postyar scheduler tick shim (generated by scripts/deploy.sh — do not edit).
-process.chdir('${APP_HOME}/app');
-require('${APP_HOME}/app/dist/scheduler.js');
-EOF
-  ok "Worker/scheduler shims written: ${APP_HOME}/workers/{worker,scheduler}.js"
+  # Passenger/worker/scheduler entries are COMMITTED in the release tree and
+  # resolve postelrobbal/app relative to themselves (§55) — deploy only syncs them.
+  install -m 0644 "${RELEASE_DIR}/postelrobbal/api/app.js" "${APP_HOME}/api/app.js"
+  install -m 0644 "${RELEASE_DIR}/postelrobbal/workers/worker.js" "${APP_HOME}/workers/worker.js"
+  install -m 0644 "${RELEASE_DIR}/postelrobbal/scheduler/scheduler.js" "${APP_HOME}/scheduler/scheduler.js"
+  ok "Entries deployed: api/app.js, workers/worker.js, scheduler/scheduler.js"
 
   # .env must be readable by the API process only.
   chmod 600 "${ENV_FILE}" 2>/dev/null || warn "could not chmod 600 ${ENV_FILE}"
@@ -258,8 +245,8 @@ workers_note() {
     ok "A postyar worker process is already running — NOT starting another one."
   else
     warn "No running postyar worker detected. Install the cron lines from DEPLOYMENT.md:"
-    warn "  * * * * * flock -n /tmp/postyar-scheduler.lock cd ${APP_HOME}/workers && /usr/bin/node scheduler.js >> ${APP_HOME}/logs/scheduler.log 2>&1"
-    warn "  @reboot flock -n /tmp/postyar-worker.lock cd ${APP_HOME}/workers && /usr/bin/node worker.js >> ${APP_HOME}/logs/worker.log 2>&1"
+    warn "  * * * * * flock -n /tmp/postyar-scheduler.lock /usr/bin/node ${APP_HOME}/scheduler/scheduler.js >> ${APP_HOME}/logs/scheduler.log 2>&1"
+    warn "  @reboot flock -n /tmp/postyar-worker.lock /usr/bin/node ${APP_HOME}/workers/worker.js >> ${APP_HOME}/logs/worker.log 2>&1"
     warn "Use flock (or the Redis scheduler lock) to guarantee single instances."
   fi
 }

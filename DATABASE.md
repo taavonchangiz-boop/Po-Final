@@ -2,30 +2,30 @@
 
 Engine: **MySQL 8 / MariaDB ≥ 10.6**, `utf8mb4` / `utf8mb4_unicode_ci`, InnoDB everywhere, session time zone `+00:00`. All identifiers are **ULID `CHAR(26)`** (lexicographically sortable). Money is stored as **BIGINT rials** (ADR-0012) — never floats. Multi-tenancy: `tenant_id === users.id` on every tenant-owned row.
 
-Access layer: `app/src/db/client.ts` (mysql2 pool via drizzle-orm) with the schema mapping in `app/src/db/schema.ts`.
+Access layer: `postelrobbal/app/src/db/client.ts` (mysql2 pool via drizzle-orm) with the schema mapping in `postelrobbal/app/src/db/schema.ts`.
 
 ---
 
 ## Migration workflow
 
-The runner (`app/src/db/migrate.ts`, exposed by `app/src/db/migrate-cli.ts`) is **deterministic and file-driven**:
+The runner (`postelrobbal/app/src/db/migrate.ts`, exposed by `postelrobbal/app/src/db/migrate-cli.ts`) is **deterministic and file-driven**:
 
 1. Ensures `schema_migrations(name VARCHAR(190) PK, applied_at)` exists.
-2. Lists `database/migrations/*.sql`, sorts **lexically**, and applies each file **exactly once** inside a transaction (`BEGIN → run file → INSERT INTO schema_migrations → COMMIT`); any failure rolls back and aborts the deploy.
+2. Lists `postelrobbal/database/migrations/*.sql`, sorts **lexically**, and applies each file **exactly once** inside a transaction (`BEGIN → run file → INSERT INTO schema_migrations → COMMIT`); any failure rolls back and aborts the deploy.
 3. **Drift detection**: if the DB records an applied migration whose file is not present in the release, the runner **aborts instead of guessing**.
 
 **How to add migration `0003_*.sql`:**
 
-1. Change tables in `app/src/db/schema.ts` first (drizzle is the mapping of record) and update the affected services.
-2. Author the SQL by hand at `database/migrations/0003_<topic>.sql` (the repo intentionally has **no `drizzle.config.ts`** — `drizzle-kit` is available as a devDependency if you want to diff, but the committed SQL file is the source of truth; never let a tool auto-apply anything). Keep the header comment style of `0001_init.sql`, use `SET NAMES utf8mb4;` and explicit `ENGINE=InnoDB ... CHARSET=utf8mb4`.
+1. Change tables in `postelrobbal/app/src/db/schema.ts` first (drizzle is the mapping of record) and update the affected services.
+2. Author the SQL by hand at `postelrobbal/database/migrations/0003_<topic>.sql` (the repo intentionally has **no `drizzle.config.ts`** — `drizzle-kit` is available as a devDependency if you want to diff, but the committed SQL file is the source of truth; never let a tool auto-apply anything). Keep the header comment style of `0001_init.sql`, use `SET NAMES utf8mb4;` and explicit `ENGINE=InnoDB ... CHARSET=utf8mb4`.
 3. Migrations must be **forward-only and deterministic** (no `NOW()`-dependent DDL, no data backfills that depend on external state). Never edit an already-released migration — add a new one.
-4. Verify locally: `cd app && bun run migrate` (applies 0003 on a fresh or dev DB; re-run prints `Already up to date.`).
+4. Verify locally: `cd postelrobbal/app && bun run migrate` (applies 0003 on a fresh or dev DB; re-run prints `Already up to date.`).
 5. Review the SQL like code, then commit **schema change + migration together**. Deploys only *apply existing files* — they never generate schema.
 
 ## Drift policy
 
 - The runner refuses to run when the database knows migrations the release does not ship (ahead-of-release drift).
-- Deploy (`scripts/deploy.sh`) prints applied vs present before applying, and fails on drift.
+- Deploy (`postelrobbal/scripts/deploy.sh`) prints applied vs present before applying, and fails on drift.
 - Out-of-band `ALTER TABLE` on production is forbidden; it *is* drift and must be reconciled by adding the missing migration to the repo, not by hand-editing both sides.
 
 ## Connection pool guidance
@@ -43,7 +43,7 @@ The runner (`app/src/db/migrate.ts`, exposed by `app/src/db/migrate-cli.ts`) is 
 
 ---
 
-## Table catalog (41 tables, from `database/migrations/0001_init.sql`)
+## Table catalog (41 tables, from `postelrobbal/database/migrations/0001_init.sql`)
 
 ### Identity & access
 

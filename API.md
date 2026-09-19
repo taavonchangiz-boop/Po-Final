@@ -1,6 +1,6 @@
 # Postyar — API Reference (v1)
 
-Generated from the implemented route modules (`app/src/modules/*/`); every listed route exists in code. Base URL: `${API_URL}/api/v1` unless noted. Health routes live outside the namespace.
+Generated from the implemented route modules (`postelrobbal/app/src/modules/*/`); every listed route exists in code. Base URL: `${API_URL}/api/v1` unless noted. Health routes live outside the namespace.
 
 ## Conventions
 

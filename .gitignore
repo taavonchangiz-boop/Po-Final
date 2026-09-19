@@ -8,8 +8,9 @@ node_modules/
 !.env.example
 
 # Build output (rebuilt by CI / make-release.sh; not tracked)
-app/dist/
-frontend/dist/
+postelrobbal/app/dist/
+postelrobbal/frontend/dist/
+public_html/.postyar-deployed
 
 # Logs
 *.log

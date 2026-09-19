@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: app
+        working-directory: postelrobbal/app
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: frontend
+        working-directory: postelrobbal/frontend
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -44,7 +44,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
-          path: frontend/dist/
+          path: public_html/
           retention-days: 7
 
   unit-tests:
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: app
+        working-directory: postelrobbal/app
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -75,7 +75,7 @@ jobs:
           set -euo pipefail
           # Mirrors scripts/release-check.sh — keep both in sync.
           MATCHES=$(grep -rIEn "(sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|xox[bp]-[A-Za-z0-9-]{10,})" \
-            app/src frontend/src database wordpress-plugin scripts docs assets 2>/dev/null || true)
+            postelrobbal/app/src postelrobbal/frontend/src postelrobbal/database wordpress-plugin postelrobbal/scripts docs assets public_html 2>/dev/null || true)
           if [ -n "$MATCHES" ]; then
             echo "SECRET SCAN FAILED:"; echo "$MATCHES"; exit 1
           fi
@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           MATCHES=$(grep -rn --exclude="release-check.sh" "TODO: RELEASE\|FIXME: RELEASE\|XXX: RELEASE" \
-            app/src frontend/src wordpress-plugin database scripts docs 2>/dev/null || true)
+            postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin postelrobbal/database postelrobbal/scripts docs 2>/dev/null || true)
           if [ -n "$MATCHES" ]; then
             echo "RELEASE MARKERS FOUND:"; echo "$MATCHES"; exit 1
           fi
@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           MATCHES=$(grep -rEi "from ['\"]next(/|['\"]| )|(nextjs|next\.js)" \
-            app/src frontend/src wordpress-plugin 2>/dev/null || true)
+            postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin 2>/dev/null || true)
           if [ -n "$MATCHES" ]; then
             echo "FORBIDDEN FRAMEWORK REFERENCES:"; echo "$MATCHES"; exit 1
           fi

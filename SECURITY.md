@@ -1,6 +1,6 @@
 # Postyar — Security
 
-Status: v1.0.0 · Engineering doc (product UI is Persian). Threat-model controls map 1:1 to implemented code in `app/src/`.
+Status: v1.0.0 · Engineering doc (product UI is Persian). Threat-model controls map 1:1 to implemented code in `postelrobbal/app/src/`.
 
 ## 1. Threat model → controls
 
@@ -18,7 +18,7 @@ Status: v1.0.0 · Engineering doc (product UI is Persian). Threat-model controls
 | T10 | XSS / clickjacking | Helmet CSP (`default-src 'self'`), `frame-ancestors 'none'`, HSTS in production; React escaping in SPA |
 | T11 | DoS via oversized payloads | `bodyLimit` 2 MB, multipart caps, pagination caps (pageSize ≤ 100), bounded workflow interpreter (≤20 steps/60 s) |
 | T12 | Injection | Drizzle parameterized SQL everywhere; zod validation on every boundary |
-| T13 | Supply-chain / repo leaks | Secret scan in `scripts/release-check.sh` + CI; `.env` git-ignored; packaging excludes `.env`, keys, DB files |
+| T13 | Supply-chain / repo leaks | Secret scan in `postelrobbal/scripts/release-check.sh` + CI; `.env` git-ignored; packaging excludes `.env`, keys, DB files |
 
 ## 2. Auth design
 
@@ -70,7 +70,7 @@ Any user-supplied URL (gold `sourceUrl`, product `image_url`, media fetch) goes 
 
 ## 8. Secrets policy (§93)
 
-- **Never commit** real `.env` — the repo carries only `.env.example` with placeholders; CI and `release-check.sh` fail on committed secrets/keys.
+- **Never commit** real `.env` — the repo carries only `postelrobbal/config/.env.example` with placeholders; CI and `release-check.sh` fail on committed secrets/keys.
 - On the server: `postelrobbal/config/.env`, `chmod 600`, owned by the cPanel user; readable by the API process only.
 - Generation: `SESSION_SECRET`/`CSRF_SECRET` ≥32 random chars (`openssl rand -base64 48`); `ENCRYPTION_KEY` = `openssl rand -hex 32`.
 - Scope discipline: one key set per environment; staging ≠ production; bot tokens and AI keys belong to tenants/global settings, not to code.

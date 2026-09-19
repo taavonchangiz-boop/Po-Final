@@ -8,7 +8,7 @@ Audience: the on-call operator of a Postyar production deployment (cPanel/Passen
 |---|---|---|---|
 | API (Passenger) | touch `postelrobbal/api/tmp/restart.txt` (starts if configured) | cPanel Node.js App → *Stop App* | `curl -fsS $API_URL/health/live` |
 | Worker | cron `@reboot flock -n /tmp/postyar-worker.lock node postelrobbal/workers/worker.js` | `pkill -f "postyar-worker"` (worker drains gracefully on SIGTERM) | `pgrep -af "postyar-worker"` |
-| Scheduler | cron `* * * * * flock -n /tmp/postyar-scheduler.lock node postelrobbal/workers/scheduler.js` | remove the cron line | `tail postelrobbal/logs/scheduler.log` |
+| Scheduler | cron `* * * * * flock -n /tmp/postyar-scheduler.lock node postelrobbal/scheduler/scheduler.js` | remove the cron line | `tail postelrobbal/logs/scheduler.log` |
 | MySQL / Redis | managed externally | — | `deploy.sh` preflight pings / `/health/ready` |
 
 A full restart = Passenger `restart.txt` + worker `pkill` (cron `@reboot` brings it back, or start it manually with the exact cron command).
@@ -42,8 +42,8 @@ Or from the app dir: `node -e 'import("file://"+process.cwd()+"/dist/queue/queue
 
 ## 5. Migration ops
 
-- Status: `scripts/deploy.sh` prints applied vs present (read-only) before applying. Manual: `SELECT name, applied_at FROM schema_migrations ORDER BY name;`
-- Apply pending: re-run `scripts/deploy.sh` (or `cd app && bun run migrate` in dev).
+- Status: `postelrobbal/scripts/deploy.sh` prints applied vs present (read-only) before applying. Manual: `SELECT name, applied_at FROM schema_migrations ORDER BY name;`
+- Apply pending: re-run `postelrobbal/scripts/deploy.sh` (or `cd postelrobbal/app && bun run migrate` in dev).
 - **Drift** (DB knows a migration the release doesn't): the runner aborts. Resolution: ship the missing file in the release — never delete rows from `schema_migrations`.
 - Migrations are forward-only; fixes are new migrations (DATABASE.md → workflow).
 

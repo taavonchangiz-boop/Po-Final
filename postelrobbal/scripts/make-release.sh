@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 NAME="postyar-production-final"
 STAGE="/tmp/${NAME}-staging"
 OUT_ZIP="${ROOT}/${NAME}.zip"
@@ -99,10 +99,11 @@ LISTING="$(unzip -l "${OUT_ZIP}")"
 FILE_COUNT="$(printf '%s\n' "${LISTING}" | awk '/files$/{print $2}')"
 [ "${FILE_COUNT:-0}" -gt 0 ] || die "zip listing reports 0 files."
 for required in \
-  "app/package.json" "frontend/package.json" "README.md" "ARCHITECTURE.md" \
+  "postelrobbal/app/package.json" "postelrobbal/frontend/package.json" "README.md" "ARCHITECTURE.md" \
   "DATABASE.md" "SECURITY.md" "DEPLOYMENT.md" "OPERATIONS.md" \
   "TROUBLESHOOTING.md" "API.md" "WORDPRESS.md" "PRODUCT-SPEC.md" \
-  "database/migrations/0001_init.sql" "scripts/deploy.sh" "scripts/release-check.sh" ".env.example" "SHA256SUMS"; do
+  "postelrobbal/database/migrations/0001_init.sql" "postelrobbal/scripts/deploy.sh" "postelrobbal/scripts/release-check.sh" "postelrobbal/config/.env.example" "SHA256SUMS" \
+  "public_html/index.html" "postelrobbal/api/app.js" "postelrobbal/workers/worker.js" "postelrobbal/scheduler/scheduler.js"; do
   grep -q " ${required}\$" <<<"${LISTING}" || die "required file missing from zip: ${required}"
 done
 ok "Archive contains ${FILE_COUNT} entries; required files verified"

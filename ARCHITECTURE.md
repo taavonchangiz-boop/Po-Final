@@ -6,11 +6,11 @@ Version 1.0.0 | Status: FROZEN (Phase 07 of the execution contract)
 
 ```
 postyar-production-final/
-├── app/        Fastify 5 + TypeScript (Node >=22)  — API + worker + scheduler
-├── frontend/   Vite + React 18 + TypeScript SPA    — static output only (no Node server)
+├── postelrobbal/        Fastify 5 + TypeScript (Node >=22)  — API + worker + scheduler
+├── postelrobbal/frontend/   Vite + React 18 + TypeScript SPA    — static output only (no Node server)
 ├── wordpress-plugin/postyar-connector/             — official WP adapter
-├── database/migrations/                            — ordered SQL migrations (MySQL/MariaDB)
-├── scripts/    deploy.sh, release-check.sh
+├── postelrobbal/database/migrations/                            — ordered SQL migrations (MySQL/MariaDB)
+│   └── scripts/    deploy.sh, release-check.sh
 ├── tests/      vitest unit tests (DB-free) + integration specs
 ├── docs/adr/   architecture decision records
 └── audits/     forensic audits of the reference systems
@@ -66,7 +66,7 @@ Rules:
 ## 4. Data Platform
 
 - MySQL 8 / MariaDB 10.6+, utf8mb4, InnoDB.
-- Drizzle ORM + drizzle-kit; canonical migrations committed under `database/migrations/NNNN_*.sql`.
+- Drizzle ORM + drizzle-kit; canonical migrations committed under `postelrobbal/database/migrations/NNNN_*.sql`.
 - Money: BIGINT minor units (Rial). Never float.
 - Tenant isolation: every tenant-owned table carries `tenant_id`; every query filtered by `tenant_id` derived from the session — never from client-supplied IDs. Cross-tenant IDs are opaque ULIDs.
 - Sessions: server-side `sessions` table; opaque random token (32B) in HttpOnly+SameSite=Lax+Secure cookie; rotation on login; revocation list = delete row; no JWT, nothing sensitive in localStorage.
@@ -122,7 +122,7 @@ Append-only `events` table (name, tenant_id, subject refs, numeric props, no cre
 
 ## 10. Deployment Contract
 
-- `scripts/deploy.sh`: preflight (node version, dirs, env presence, DB/Redis reachability) → build if needed → `migrate status` → apply existing migrations only (never invents) → Passenger restart → health verification. No Redis install, no test suite, no worker duplication.
+- `postelrobbal/scripts/deploy.sh`: preflight (node version, dirs, env presence, DB/Redis reachability) → build if needed → `migrate status` → apply existing migrations only (never invents) → Passenger restart → health verification. No Redis install, no test suite, no worker duplication.
 - Health: `/health/live` (cheap), `/health/ready` (MySQL + Redis real checks), `/health` (summary).
 
 ## 11. ADR Index

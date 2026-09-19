@@ -6,8 +6,8 @@ Symptom → cause → fix. Commands assume the deployment layout in DEPLOYMENT.m
 
 - **Symptom**: Passenger 502/503 immediately after deploy; cPanel app stderr shows `Invalid environment configuration: …`.
 - **Cause**: `env.ts` (zod) fails fast — missing `DATABASE_URL`/`REDIS_URL`, `SESSION_SECRET`/`CSRF_SECRET` shorter than 32 chars, or `ENCRYPTION_KEY` not 64 hex.
-- **Fix**: complete `postelrobbal/config/.env` from `.env.example`, `chmod 600`, then `touch postelrobbal/api/tmp/restart.txt`. Re-run `scripts/deploy.sh` — its preflight reproduces the same checks before touching Passenger.
-- **Variant**: `Cannot find module '…/app/dist/server.js'` → dist missing (deploy refuses this case; you deployed a source-only tree). Build in CI, re-deploy.
+- **Fix**: complete `postelrobbal/config/.env` from `postelrobbal/config/.env.example`, `chmod 600`, then `touch postelrobbal/api/tmp/restart.txt`. Re-run `postelrobbal/scripts/deploy.sh` — its preflight reproduces the same checks before touching Passenger.
+- **Variant**: `Cannot find module '…/postelrobbal/app/dist/server.js'` → dist missing (deploy refuses this case; you deployed a source-only tree). Build in CI, re-deploy.
 
 ## 2. Database connection problems
 
@@ -37,7 +37,7 @@ Symptom → cause → fix. Commands assume the deployment layout in DEPLOYMENT.m
 
 - **Symptom**: deploy fails with `Schema drift detected: applied migration(s) not present in release: …`.
 - **Cause**: DB was migrated ahead of the release tree (hotfixed file, deleted migration).
-- **Fix**: ship the missing SQL file in `database/migrations/` — never delete rows from `schema_migrations`. 
+- **Fix**: ship the missing SQL file in `postelrobbal/database/migrations/` — never delete rows from `schema_migrations`. 
 - **Variant**: `Migration 000X failed: …` → the transaction rolled back; fix the SQL, re-deploy (runner resumes cleanly). A partially applied file cannot exist by construction.
 
 ## 7. CORS / auth-cookie issues

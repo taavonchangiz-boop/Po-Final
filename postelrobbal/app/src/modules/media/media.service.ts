@@ -26,9 +26,12 @@ const MIME_EXT: Record<string, string> = {
 
 export function storageRoot(): string {
   const raw = process.env.STORAGE_DIR;
+  // §55 layout: app and api both sit directly under the private postelrobbal/
+  // root, so the sibling private/storage is the default private media root
+  // regardless of which entry (Passenger api/ or worker chdir app/) runs.
   return raw && raw.trim() !== ''
     ? path.resolve(raw.trim())
-    : path.resolve(process.cwd(), './private/storage');
+    : path.resolve(process.cwd(), '..', 'private', 'storage');
 }
 
 /** Magic-byte sniffing — declared MIME must match actual content. */

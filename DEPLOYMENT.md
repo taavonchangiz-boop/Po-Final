@@ -7,17 +7,21 @@ Production target is a **shared cPanel host** with CloudLinux and Phusion Passen
 ```
 /home/account/
 ├── postelrobbal/                  PRIVATE application root (never web-served)
-│   ├── app/                       backend build output (dist/) + node_modules + package.json
+│   ├── app/                       backend source + build output (dist/) + node_modules
 │   ├── api/                       Passenger entry (app.js) + tmp/restart.txt
-│   ├── config/                    .env (chmod 600) + api.port
-│   ├── workers/                   worker.js, scheduler.js shims (cron-launched)
+│   ├── config/                    .env (chmod 600) + api.port + .env.example template
+│   ├── workers/                   worker.js (cron @reboot, flock-guarded)
+│   ├── scheduler/                 scheduler.js (cron * * * * *, flock-guarded)
 │   ├── database/migrations/       shipped migration SQL (applied by deploy)
 │   ├── private/                   private uploads root
-│   ├── storage/                   runtime media storage (STORAGE_DIR)
-│   └── logs/                      worker.log, scheduler.log, cron output
-└── public_html/                   PUBLIC web root
-    ├── index.html assets/         built SPA (rsync from frontend/dist)
+│   ├── storage/                   runtime media storage (STORAGE_DIR default)
+│   ├── logs/                      worker.log, scheduler.log, cron output
+│   ├── frontend/                  Vite React SPA source (builds into public_html/)
+│   └── scripts/                   deploy.sh · release-check.sh · make-release.sh
+└── public_html/                   PUBLIC web root (committed in the repo, §55)
+    ├── index.html assets/         built SPA (hashed css/js — 0 Node processes)
     ├── images/ fonts/ icons/      brand assets
+    ├── .htaccess                  SPA fallback rewrite + hardening
     ├── .postyar-deployed          deploy marker (guards rsync --delete)
     └── api/                       .htaccess rewrite → Passenger (AppBase mapping)
 ```
@@ -27,7 +31,7 @@ Rule: **nothing sensitive under `public_html/`** — no `.env`, no app code, no 
 ## 2. Passenger entry setup
 
 1. cPanel → *Setup Node.js App*: Application root `postelrobbal/api`, Application URL `api` (or mapped via `.htaccess` rewrite from `/api`), startup file `app.js`.
-2. `scripts/deploy.sh` (re)writes `postelrobbal/api/app.js` — a tiny CommonJS shim that requires `../app/dist/server.js`; the Fastify server binds `0.0.0.0:$PORT` where **Passenger provides `PORT`**.
+2. `postelrobbal/scripts/deploy.sh` (re)writes `postelrobbal/api/app.js` — a tiny CommonJS shim that requires `../postelrobbal/app/dist/server.js`; the Fastify server binds `0.0.0.0:$PORT` where **Passenger provides `PORT`**.
 3. Restart = touch `postelrobbal/api/tmp/restart.txt` (deploy.sh does this; `passenger restart-app` when the CLI exists). There is **no** `systemctl`/PM2 on shared hosts.
 4. Node version: select **22+** in the cPanel Node.js App UI; `deploy.sh` enforces ≥22 as preflight.
 
@@ -37,7 +41,7 @@ Workers are **not** started by deploy.sh (no duplication, §68). Install these i
 
 ```cron
 # Scheduler — tick model every minute; flock prevents overlap; Redis lock (SET NX EX 55) prevents double-tick across machines
-* * * * * flock -n /tmp/postyar-scheduler.lock /usr/bin/node /home/account/postelrobbal/workers/scheduler.js >> /home/account/postelrobbal/logs/scheduler.log 2>&1
+* * * * * flock -n /tmp/postyar-scheduler.lock /usr/bin/node /home/account/postelrobbal/scheduler/scheduler.js >> /home/account/postelrobbal/logs/scheduler.log 2>&1
 
 # Worker — single long-running instance; @reboot + flock guard against duplicates
 @reboot flock -n /tmp/postyar-worker.lock /usr/bin/node /home/account/postelrobbal/workers/worker.js >> /home/account/postelrobbal/logs/worker.log 2>&1
@@ -49,14 +53,14 @@ Workers are **not** started by deploy.sh (no duplication, §68). Install these i
 
 ## 4. Environment configuration
 
-1. `cp .env.example postelrobbal/config/.env` then fill values (see the annotated template): `DATABASE_URL`, external `REDIS_URL`, `APP_URL` (SPA origin), `API_URL` (public API base — bot webhooks are registered as `${API_URL}/api/v1/webhooks/bots/:id?s=…`), `SESSION_SECRET` (≥32), `CSRF_SECRET` (≥32), `ENCRYPTION_KEY` (64 hex), `ALLOWED_ORIGINS` (comma list, credentials enabled).
+1. `cp postelrobbal/config/.env.example postelrobbal/config/.env` then fill values (see the annotated template): `DATABASE_URL`, external `REDIS_URL`, `APP_URL` (SPA origin), `API_URL` (public API base — bot webhooks are registered as `${API_URL}/api/v1/webhooks/bots/:id?s=…`), `SESSION_SECRET` (≥32), `CSRF_SECRET` (≥32), `ENCRYPTION_KEY` (64 hex), `ALLOWED_ORIGINS` (comma list, credentials enabled).
 2. `chmod 600 postelrobbal/config/.env`.
 3. `DB_POOL_MAX=5` default; `WORKER_CONCURRENCY=3`, `AI_WORKER_CONCURRENCY=1` per the shared-host process budget (API 1 / Worker 1 / Scheduler 1 / Redis 0).
-4. The app fails fast on invalid/missing config (`app/src/config/env.ts`, zod) — an incomplete `.env` means the API will not boot.
+4. The app fails fast on invalid/missing config (`postelrobbal/app/src/config/env.ts`, zod) — an incomplete `.env` means the API will not boot.
 
 ## 5. Migration policy
 
-- `scripts/deploy.sh` prints **applied vs present** migrations, aborts on drift, then applies **existing** migration files exactly once via the deterministic runner (`app/src/db/migrate.js` → `runMigrations`). It never invents or reorders migrations (§66/§201).
+- `postelrobbal/scripts/deploy.sh` prints **applied vs present** migrations, aborts on drift, then applies **existing** migration files exactly once via the deterministic runner (`postelrobbal/app/src/db/migrate.js` → `runMigrations`). It never invents or reorders migrations (§66/§201).
 - First deployment applies `0001_init.sql` + `0002_seed.sql` (schema + 5 plans + system settings) in order.
 - Rollback of a migration is **not automated** — migrations are forward-only (§202). See §7.
 
@@ -64,17 +68,17 @@ Workers are **not** started by deploy.sh (no duplication, §68). Install these i
 
 ```bash
 # on the build box (CI or local):
-scripts/release-check.sh          # gate: must pass (0 blockers)
-scripts/make-release.sh           # → postyar-production-final.zip + SHA256SUMS
+postelrobbal/scripts/release-check.sh          # gate: must pass (0 blockers)
+postelrobbal/scripts/make-release.sh           # → postyar-production-final.zip + SHA256SUMS
 # upload + unzip on the host, then on the host:
-scripts/deploy.sh                 # add --build only on a build machine, never on prod
+postelrobbal/scripts/deploy.sh                 # add --build only on a build machine, never on prod
 ```
 
-`deploy.sh` steps (safe to re-run): preflight (node ≥22, dirs, env presence incl. 64-hex `ENCRYPTION_KEY`, MySQL/Redis pings via the app's node_modules) → artifacts (`app/dist`, `frontend/dist` must exist; missing = hard error instructing CI build) → prod deps install (`bun install --frozen-lockfile --production`, skipped when present) → migration status + apply → `rsync` SPA into `public_html` (**--delete guarded** by the `.postyar-deployed` marker) → backend dist into `postelrobbal/app` → write Passenger/worker shims → Passenger restart → health verification (5 tries × 3 s) → worker/scheduler duplication check. No Redis install, no test suite on prod.
+`deploy.sh` steps (safe to re-run): preflight (node ≥22, dirs, env presence incl. 64-hex `ENCRYPTION_KEY`, MySQL/Redis pings via the app's node_modules) → artifacts (`postelrobbal/app/dist`, `public_html` must exist; missing = hard error instructing CI build) → prod deps install (`bun install --frozen-lockfile --production`, skipped when present) → migration status + apply → `rsync` SPA into `public_html` (**--delete guarded** by the `.postyar-deployed` marker) → backend dist into `postelrobbal/app` → write Passenger/worker shims → Passenger restart → health verification (5 tries × 3 s) → worker/scheduler duplication check. No Redis install, no test suite on prod.
 
 ## 7. Rollback
 
-- **Code rollback**: keep the previous `postyar-production-final.zip`; unzip to a staging dir and re-run `scripts/deploy.sh` from that tree (or keep `postelrobbal/app/dist.<prev>` and swap). Passenger restart returns the old build instantly.
+- **Code rollback**: keep the previous `postyar-production-final.zip`; unzip to a staging dir and re-run `postelrobbal/scripts/deploy.sh` from that tree (or keep `postelrobbal/app/dist.<prev>` and swap). Passenger restart returns the old build instantly.
 - **Migrations are never auto-reversed** (§202): a rollback re-deploys older *code* against the newer schema — releases are therefore required to be **expand/contract-compatible one release back** (additive columns/tables only, or tolerate-unknown-columns reads). If a migration must be undone, author a **new forward migration** `000N_revert_<topic>.sql`; manual `DROP`/`UPDATE` surgery on prod is prohibited.
 - Data written by the new version (events, ledger rows) is preserved by this policy.
 

@@ -4,7 +4,7 @@ Companion docs: `docs/WORDPRESS.md` (Persian, wire-protocol v1 — normative) ·
 
 ## 1. Status
 
-- **SaaS side: fully implemented** — `app/src/modules/wordpress/{wordpress.routes.ts,wordpress.service.ts}`, tables `wordpress_sites` / `wordpress_products`, webhook ingestion with product change detection and channel fan-out through the transactional outbox (`wordpress.publish` → `deliver-product`).
+- **SaaS side: fully implemented** — `postelrobbal/app/src/modules/wordpress/{wordpress.routes.ts,wordpress.service.ts}`, tables `wordpress_sites` / `wordpress_products`, webhook ingestion with product change detection and channel fan-out through the transactional outbox (`wordpress.publish` → `deliver-product`).
 - **Plugin side: implemented** — `wordpress-plugin/postyar-connector/` v1.0.0 (~1,500 lines: `class-pyc-{sync,ajax,admin,settings,db}.php`, `uninstall.php`, admin CSS/JS). Product save hooks enqueue a bounded queue; a debounced single cron event (`pyc_sync_cron`, +10 min, retry hook `pyc_retry` max 3 tries) drains it in batches of 50 products per HTTP call (≤200 accepted server-side) to `{saas_url}/api/v1/webhooks/wordpress` with the secret **in headers only** (never in a query string). Admin screen: settings save via `admin_post`, AJAX handlers (`pyc_test_connection`, `pyc_sync_batch`, `pyc_get_status`) all guarded by nonce `pyc_admin` + `manage_options`; connection test + status panel expose next-cron time. Deactivation clears the plugin's scheduled events; upgrade re-runs idempotent `dbDelta` on DB-version change; uninstall performs a full local wipe (options, tables, cron events).
 
 ## 2. Security model (implemented server-side)

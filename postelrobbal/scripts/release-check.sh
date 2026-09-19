@@ -23,7 +23,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${1:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+ROOT="${1:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 
 BLOCKERS=0
 WARNINGS=0
@@ -36,7 +36,7 @@ cd "${ROOT}"
 
 # Scan domain: real product/config/docs dirs; never node_modules/dist (vendor
 # and build output can legitimately contain third-party strings).
-SCAN_DIRS=(app/src frontend/src wordpress-plugin database scripts docs assets audits .github)
+SCAN_DIRS=(postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin postelrobbal/database postelrobbal/scripts docs assets audits .github public_html)
 SCAN_EXISTING=()
 for d in "${SCAN_DIRS[@]}"; do [ -e "$d" ] && SCAN_EXISTING+=("$d"); done
 
@@ -51,7 +51,11 @@ while IFS= read -r -d '' f; do
       fail "forbidden file present: $f"; FORBIDDEN_FOUND=1 ;;
     *.pem|*.key)
       fail "private key material present: $f"; FORBIDDEN_FOUND=1 ;;
-    ./private/*|./storage/*|./logs/*|./app/private/*|./frontend/private/*)
+    # Real local .env files (gitignored, developer-only) and .gitkeep
+    # placeholders (empty runtime dirs) are not release content; the staging
+    # copy that make-release.sh gates excludes real .env files entirely.
+    */.env|*.gitkeep) continue ;;
+    ./private/*|./storage/*|./logs/*|./postelrobbal/private/*|./postelrobbal/storage/*|./postelrobbal/logs/*|./postelrobbal/app/private/*)
       fail "private runtime/upload data committed: $f"; FORBIDDEN_FOUND=1 ;;
   esac
 done < <(find . -path ./node_modules -prune -o -path '*/node_modules' -prune -o -path '*/dist' -prune -o -path ./.git -prune -o -type f -print0)
@@ -93,7 +97,7 @@ pass ".env.example contains placeholders only (by design)"
 # ------------------------------------------------------ 4. Next.js references
 echo "== 4/6 Next.js reference scan (product source only) =="
 NEXT_HITS=0
-for dir in app/src frontend/src wordpress-plugin; do
+for dir in postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin; do
   [ -e "$dir" ] || continue
   HITS="$(grep -rEi "from ['\"]next(/|['\"]| )|require\(['\"]next|import\(['\"]next|['\"]next['\"]\s*:|nextjs|next\.js" "$dir" 2>/dev/null || true)"
   if [ -n "$HITS" ]; then
@@ -107,7 +111,7 @@ done
 # ------------------------------------------------------ 5. release markers
 echo "== 5/6 Unresolved release markers =="
 # --exclude=this script: its own pattern text would otherwise self-match.
-MARKER_HITS="$(grep -rn --exclude="release-check.sh" "TODO: RELEASE\|FIXME: RELEASE\|XXX: RELEASE" app frontend wordpress-plugin database scripts docs 2>/dev/null || true)"
+MARKER_HITS="$(grep -rn --exclude="release-check.sh" "TODO: RELEASE\|FIXME: RELEASE\|XXX: RELEASE" postelrobbal wordpress-plugin docs public_html 2>/dev/null || true)"
 if [ -n "$MARKER_HITS" ]; then
   fail "explicit release markers found (plain TODO/FIXME are allowed):"
   printf '%s\n' "$MARKER_HITS"
@@ -130,23 +134,38 @@ for doc in README.md ARCHITECTURE.md DATABASE.md SECURITY.md DEPLOYMENT.md \
   else fail "missing required doc: $doc"; fi
 done
 
-[ -s "app/package.json" ]      && pass "app/package.json"      || fail "missing app/package.json"
-[ -s "frontend/package.json" ] && pass "frontend/package.json" || fail "missing frontend/package.json"
+[ -s "postelrobbal/app/package.json" ]      && pass "postelrobbal/app/package.json"      || fail "missing postelrobbal/app/package.json"
+[ -s "postelrobbal/frontend/package.json" ] && pass "postelrobbal/frontend/package.json" || fail "missing postelrobbal/frontend/package.json"
+[ -s "postelrobbal/config/.env.example" ]   && pass "postelrobbal/config/.env.example"   || fail "missing postelrobbal/config/.env.example"
 SQL_COUNT=0
-for sql in database/migrations/*.sql; do
-  [ -e "$sql" ] || { fail "no migrations in database/migrations/"; break; }
+for sql in postelrobbal/database/migrations/*.sql; do
+  [ -e "$sql" ] || { fail "no migrations in postelrobbal/database/migrations/"; break; }
   if [ -s "$sql" ]; then SQL_COUNT=$((SQL_COUNT + 1)); else fail "empty migration file: $sql"; fi
 done
-[ "$SQL_COUNT" -gt 0 ] && pass "database/migrations: $SQL_COUNT non-empty SQL file(s)"
+[ "$SQL_COUNT" -gt 0 ] && pass "postelrobbal/database/migrations: $SQL_COUNT non-empty SQL file(s)"
 [ -s "wordpress-plugin/postyar-connector/postyar-connector.php" ] \
   && pass "wordpress-plugin/postyar-connector/postyar-connector.php" \
   || fail "missing wordpress-plugin/postyar-connector/postyar-connector.php (connector plugin not shipped)"
-for s in scripts/deploy.sh scripts/release-check.sh; do
+for s in postelrobbal/scripts/deploy.sh postelrobbal/scripts/release-check.sh; do
   [ -s "$s" ] && pass "$s" || fail "missing required script: $s"
 done
+[ -s "postelrobbal/api/app.js" ]            && pass "postelrobbal/api/app.js (Passenger entry)"        || fail "missing postelrobbal/api/app.js"
+[ -s "postelrobbal/workers/worker.js" ]     && pass "postelrobbal/workers/worker.js"                   || fail "missing postelrobbal/workers/worker.js"
+[ -s "postelrobbal/scheduler/scheduler.js" ] && pass "postelrobbal/scheduler/scheduler.js"             || fail "missing postelrobbal/scheduler/scheduler.js"
 
-if [ -f "frontend/dist/index.html" ]; then pass "frontend/dist present"
-else warn "frontend/dist missing (expected — built at packaging time, not committed)"; fi
+# §55 layout boundary: the public web root must exist and contain a built SPA,
+# and must never contain server code or secrets.
+if [ -s "public_html/index.html" ]; then
+  pass "public_html/index.html present (built SPA committed per §55)"
+  LEAK="$(find public_html -type f \( -name '*.ts' -o -name '*.env*' -o -name '*.sql' \) 2>/dev/null || true)"
+  [ -z "$LEAK" ] && pass "public_html contains only browser assets" \
+    || { fail "public_html contains non-browser files:"; printf '%s\n' "$LEAK"; }
+else
+  warn "public_html/index.html missing — run the frontend build (vite build --outDir public_html) before release"
+fi
+
+if [ -f "postelrobbal/frontend/dist/index.html" ]; then pass "postelrobbal/frontend/dist present"
+else warn "postelrobbal/frontend/dist missing (intermediate build output, not committed)"; fi
 
 # ------------------------------------------------------------------ verdict
 echo ""
