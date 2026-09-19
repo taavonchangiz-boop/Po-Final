@@ -1,6 +1,6 @@
 # Postyar — Deployment Guide (cPanel / CloudLinux / Passenger) — v1.0.0
 
-راهنمای استقرار پُستیار روی هاست اشتراکی cPanel/CloudLinux. این سند عملیاتی و گام‌به‌گام است؛ تصمیم‌های معماری در `docs/ARCHITECTURE.md` (ADR-001…ADR-014) و مرز قرارداد API در `docs/contracts/api-contract.md` ثبت شده‌اند.
+راهنمای استقرار پُست‌یار روی هاست اشتراکی cPanel/CloudLinux. این سند عملیاتی و گام‌به‌گام است؛ تصمیم‌های معماری در `docs/ARCHITECTURE.md` (ADR-001…ADR-014) و مرز قرارداد API در `docs/contracts/api-contract.md` ثبت شده‌اند.
 
 > **قواعد طلایی (از master prompt):** Redis هرگز توسط اپلیکیشن نصب/راه‌اندازی نمی‌شود (سرویس ارائه‌شده هاست). دیتابیس هرگز recreate نمی‌شود — فقط migration رو به جلو. لاود-تست روی هاست اشتراکی ممنوع است. در deployment هرگز test suite کامل اجرا نمی‌شود و worker/scheduler تکراری spawn نمی‌شود.
 

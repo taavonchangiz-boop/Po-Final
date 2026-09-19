@@ -148,10 +148,16 @@ export const payments = mysqlTable(
     planId: bigint('plan_id', { mode: 'number' }),
     subscriptionId: bigint('subscription_id', { mode: 'number' }),
     amount: bigint('amount', { mode: 'number' }).notNull(),
-    gateway: mysqlEnum('gateway', ['ZARINPAL', 'IDPAY', 'ZIBAL', 'MOCK']).notNull(),
+    // CARD = manual card-to-card (user submits a transfer reference, admin
+    // approves/rejects); ONLINE = automated gateway session.
+    method: mysqlEnum('method', ['ONLINE', 'CARD']).notNull().default('ONLINE'),
+    gateway: mysqlEnum('gateway', ['ZARINPAL', 'IDPAY', 'ZIBAL', 'MOCK', 'CARD']).notNull(),
     authority: varchar('authority', { length: 128 }),
     gatewayRef: varchar('gateway_ref', { length: 128 }),
-    status: mysqlEnum('status', ['CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'REFUNDED']).notNull().default('CREATED'),
+    /** User-submitted transfer reference for CARD (card-to-card) payments. */
+    reference: varchar('reference', { length: 64 }),
+    // PENDING = awaiting manual admin approval (CARD payments only).
+    status: mysqlEnum('status', ['CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'REFUNDED', 'PENDING']).notNull().default('CREATED'),
     meta: json('meta').$type<Record<string, unknown>>(),
     verifiedAt: timestamp('verified_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -160,6 +166,7 @@ export const payments = mysqlTable(
   (t) => [
     index('ix_payments_user').on(t.userId),
     index('ix_payments_status').on(t.status),
+    index('ix_payments_method').on(t.method, t.status),
     uniqueIndex('uq_payments_authority').on(t.authority),
   ],
 );

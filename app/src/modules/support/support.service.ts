@@ -3,7 +3,7 @@
  * status flip semantics (user reply → OPEN, staff reply → ANSWERED).
  */
 import { and, asc, count, desc, eq, inArray } from 'drizzle-orm';
-import { notFound } from '../../core/errors.js';
+import { notFound, validationError } from '../../core/errors.js';
 import { AnalyticsService } from '../../core/events.js';
 import { db } from '../../db/client.js';
 import { media, supportTickets, ticketMessages } from '../../db/schema.js';
@@ -11,13 +11,67 @@ import { media, supportTickets, ticketMessages } from '../../db/schema.js';
 export type TicketRow = typeof supportTickets.$inferSelect;
 export type TicketMessageRow = typeof ticketMessages.$inferSelect;
 
+export interface TicketAttachmentMeta {
+  id: number;
+  originalName: string;
+  mime: string;
+  size: number;
+}
+
 export const SUPPORT_CATEGORIES = ['GENERAL', 'BILLING', 'TECHNICAL', 'FEATURE'] as const;
+
+/** Join attachment metadata (id/name/mime/size) onto message rows. Shared with the admin thread endpoint. */
+export async function attachAttachmentMeta(
+  messageRows: TicketMessageRow[],
+): Promise<Array<TicketMessageRow & { attachment: TicketAttachmentMeta | null }>> {
+  const attachmentIds = messageRows
+    .map((m) => m.attachmentId)
+    .filter((id): id is number => id !== null);
+
+  const attachments = new Map<number, TicketAttachmentMeta>();
+  if (attachmentIds.length > 0) {
+    const rows = await db
+      .select({ id: media.id, originalName: media.originalName, mime: media.mime, size: media.size })
+      .from(media)
+      .where(inArray(media.id, attachmentIds));
+    for (const row of rows) attachments.set(row.id, row);
+  }
+
+  return messageRows.map((m) => ({
+    ...m,
+    attachment: m.attachmentId !== null ? (attachments.get(m.attachmentId) ?? null) : null,
+  }));
+}
+
+/**
+ * Validate an attachmentId before binding it to a ticket message: the media row
+ * must exist and belong to the sender (users may only attach their own uploads;
+ * staff attachments only need to exist). Returns the validated id or null.
+ */
+async function validateAttachmentId(
+  attachmentId: number | null | undefined,
+  senderUserId: number | null,
+): Promise<number | null> {
+  if (attachmentId === null || attachmentId === undefined) return null;
+  const rows = await db
+    .select({ id: media.id, userId: media.userId })
+    .from(media)
+    .where(eq(media.id, attachmentId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) throw validationError('فایل پیوست یافت نشد؛ دوباره آپلود کنید.');
+  if (senderUserId !== null && row.userId !== senderUserId) {
+    throw validationError('فایل پیوست معتبر نیست.');
+  }
+  return row.id;
+}
 
 export const SupportService = {
   async createTicket(
     userId: number,
-    input: { subject: string; category: string; body: string },
+    input: { subject: string; category: string; body: string; attachmentId?: number | null },
   ): Promise<TicketRow> {
+    const attachmentId = await validateAttachmentId(input.attachmentId, userId);
     const inserted = await db
       .insert(supportTickets)
       .values({
@@ -35,6 +89,7 @@ export const SupportService = {
       senderUserId: userId,
       isStaff: false,
       body: input.body.slice(0, 5000),
+      attachmentId,
     });
 
     AnalyticsService.trackEvent({
@@ -69,7 +124,7 @@ export const SupportService = {
   async getThread(
     userId: number,
     ticketId: number,
-  ): Promise<{ ticket: TicketRow; messages: Array<TicketMessageRow & { attachment?: { id: number; originalName: string; mime: string } | null }> }> {
+  ): Promise<{ ticket: TicketRow; messages: Array<TicketMessageRow & { attachment: TicketAttachmentMeta | null }> }> {
     const ticketRows = await db
       .select()
       .from(supportTickets)
@@ -85,26 +140,7 @@ export const SupportService = {
       .orderBy(asc(ticketMessages.id))
       .limit(500);
 
-    const attachmentIds = messageRows
-      .map((m) => m.attachmentId)
-      .filter((id): id is number => id !== null);
-
-    const attachments = new Map<number, { id: number; originalName: string; mime: string }>();
-    if (attachmentIds.length > 0) {
-      const rows = await db
-        .select({ id: media.id, originalName: media.originalName, mime: media.mime })
-        .from(media)
-        .where(inArray(media.id, attachmentIds));
-      for (const row of rows) attachments.set(row.id, row);
-    }
-
-    return {
-      ticket,
-      messages: messageRows.map((m) => ({
-        ...m,
-        attachment: m.attachmentId !== null ? (attachments.get(m.attachmentId) ?? null) : null,
-      })),
-    };
+    return { ticket, messages: await attachAttachmentMeta(messageRows) };
   },
 
   /** User (or staff) reply with the status flip semantics. */
@@ -114,6 +150,7 @@ export const SupportService = {
       senderUserId: number | null;
       isStaff: boolean;
       body: string;
+      attachmentId?: number | null;
     },
     ownerId?: number,
   ): Promise<{ ticket: TicketRow; message: TicketMessageRow }> {
@@ -127,6 +164,11 @@ export const SupportService = {
       throw notFound('تیکت یافت نشد.');
     }
 
+    // Users may only attach files they uploaded themselves; staff attachments
+    // only need to exist (senderUserId is the staff account then).
+    const attachmentOwner = opts.isStaff ? null : (ownerId ?? opts.senderUserId);
+    const attachmentId = await validateAttachmentId(opts.attachmentId, attachmentOwner);
+
     const inserted = await db
       .insert(ticketMessages)
       .values({
@@ -134,6 +176,7 @@ export const SupportService = {
         senderUserId: opts.senderUserId,
         isStaff: opts.isStaff,
         body: opts.body.slice(0, 5000),
+        attachmentId,
       })
       .$returningId();
     const messageId = inserted[0]?.id;

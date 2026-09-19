@@ -1,76 +1,16 @@
 import { useEffect, useRef, useState, Suspense } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  MessagesSquare,
-  Send,
-  CalendarClock,
-  Bot,
-  Workflow,
-  Sparkles,
-  ShoppingBag,
-  Coins,
-  BarChart3,
-  CreditCard,
-  Wallet,
-  UserPlus,
-  Bell,
-  Settings,
-  LifeBuoy,
-  Shield,
-  Users,
-  Ticket,
-  Layers,
-  ScrollText,
-  Menu,
-  LogOut,
-  X,
-  ChevronDown,
-  type LucideIcon,
-} from 'lucide-react';
+import { Bell, ChevronDown, LogOut } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { post, ApiError } from '../lib/api';
 import { queryClient } from '../lib/queryClient';
 import { faNumber, labelOf, roleLabels } from '../lib/format';
-import { useUiStore } from '../store/ui';
 import { useMe, ME_QUERY_KEY } from './guards';
 import { usePageTitle } from './usePageTitle';
 import { Logo } from '../components/Logo';
+import { MobileNavbar } from '../components/MobileNavbar';
+import { ADMIN_NAV, MAIN_NAV, type NavItem } from '../components/nav';
 import { FullPageSpinner, Spinner } from '../components/ui/Spinner';
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-  end?: boolean;
-}
-
-const MAIN_NAV: NavItem[] = [
-  { to: '/app', label: 'نمای کلی', icon: LayoutDashboard, end: true },
-  { to: '/app/channels', label: 'کانال‌ها', icon: MessagesSquare },
-  { to: '/app/publishing', label: 'انتشار', icon: Send },
-  { to: '/app/scheduling', label: 'زمان‌بندی', icon: CalendarClock },
-  { to: '/app/bots', label: 'ربات‌ها', icon: Bot },
-  { to: '/app/workflows', label: 'گردش‌کارها', icon: Workflow },
-  { to: '/app/ai', label: 'هوش مصنوعی', icon: Sparkles },
-  { to: '/app/woocommerce', label: 'ووکامرس', icon: ShoppingBag },
-  { to: '/app/gold', label: 'طلا', icon: Coins },
-  { to: '/app/analytics', label: 'گزارش‌ها', icon: BarChart3 },
-  { to: '/app/subscription', label: 'اشتراک', icon: CreditCard },
-  { to: '/app/wallet', label: 'کیف پول', icon: Wallet },
-  { to: '/app/referrals', label: 'دعوت دوستان', icon: UserPlus },
-  { to: '/app/notifications', label: 'اعلان‌ها', icon: Bell },
-  { to: '/app/settings', label: 'تنظیمات', icon: Settings },
-  { to: '/app/support', label: 'پشتیبانی', icon: LifeBuoy },
-];
-
-const ADMIN_NAV: NavItem[] = [
-  { to: '/app/admin', label: 'داشبورد مدیریت', icon: Shield, end: true },
-  { to: '/app/admin/users', label: 'کاربران', icon: Users },
-  { to: '/app/admin/tickets', label: 'تیکت‌ها', icon: Ticket },
-  { to: '/app/admin/plans', label: 'پلن‌ها', icon: Layers },
-  { to: '/app/admin/audit', label: 'رخدادها', icon: ScrollText },
-];
 
 function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate?: () => void }) {
   return (
@@ -99,20 +39,14 @@ function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate?: () => v
   );
 }
 
-function SidebarContent({
-  isAdmin,
-  onNavigate,
-}: {
-  isAdmin: boolean;
-  onNavigate?: () => void;
-}) {
+function SidebarContent({ isAdmin }: { isAdmin: boolean }) {
   return (
     <nav aria-label="فهرست اصلی" className="flex-1 overflow-y-auto px-3 py-4">
-      <NavList items={MAIN_NAV} onNavigate={onNavigate} />
+      <NavList items={MAIN_NAV} />
       {isAdmin && (
         <div className="mt-6">
           <p className="mb-1.5 px-3 text-xs font-semibold text-neutral-400">مدیریت</p>
-          <NavList items={ADMIN_NAV} onNavigate={onNavigate} />
+          <NavList items={ADMIN_NAV} />
         </div>
       )}
     </nav>
@@ -144,18 +78,21 @@ function UserMenu({ onLogout, loggingOut }: { onLogout: () => void; loggingOut: 
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label="منوی حساب کاربری"
-        className="focus-ring flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-100"
+        className="focus-ring flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-100/80"
       >
         <span className="flex size-8 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-800">
           {(user?.firstName ?? 'پ').charAt(0)}
         </span>
         <span className="hidden max-w-32 truncate md:inline">{fullName}</span>
-        <ChevronDown aria-hidden="true" className="size-4 text-neutral-400" />
+        <ChevronDown
+          aria-hidden="true"
+          className={cn('size-4 text-neutral-400 transition-transform duration-200', open && 'rotate-180')}
+        />
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute end-0 top-full z-40 mt-2 w-56 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-lg"
+          className="absolute end-0 top-full z-40 mt-2 w-56 rounded-2xl border border-neutral-200/80 bg-white/90 p-1.5 shadow-xl shadow-neutral-900/10 backdrop-blur-xl"
         >
           <div className="border-b border-neutral-100 px-3 py-2">
             <p className="truncate text-sm font-medium text-neutral-900">{fullName}</p>
@@ -182,13 +119,17 @@ function UserMenu({ onLogout, loggingOut }: { onLogout: () => void; loggingOut: 
   );
 }
 
-/** RTL app shell: static desktop sidebar (start side), mobile drawer, sticky topbar. */
+/**
+ * RTL app shell (redesigned per user feedback items 4–7):
+ * - Desktop (lg+): permanent sidebar (no toggle, no collapsed state) + floating
+ *   glass sticky header panel inset from the top/sides.
+ * - Mobile/tablet (<lg): sticky floating header + floating glass bottom navbar
+ *   with a «سایر» glass bottom sheet holding all remaining destinations.
+ */
 export default function AppLayout() {
   usePageTitle('نمای کلی');
   const { data } = useMe();
   const navigate = useNavigate();
-  const sidebarOpen = useUiStore((s) => s.sidebarOpen);
-  const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
   const [loggingOut, setLoggingOut] = useState(false);
   // GET /me returns unreadNotifications at the top level (no tenant wrapper).
   const unread = data?.unreadNotifications ?? 0;
@@ -215,85 +156,52 @@ export default function AppLayout() {
 
   return (
     <div className="flex min-h-dvh">
-      {/* Desktop sidebar — start side in RTL (right) */}
+      {/* Desktop sidebar — always visible on lg+ (start side in RTL = right).
+          No collapse/hamburger on desktop: the toggle was removed entirely. */}
       <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-e border-neutral-200 bg-white lg:flex">
         <div className="flex h-16 items-center border-b border-neutral-100 px-5">
           <Logo variant="full" />
         </div>
         <SidebarContent isAdmin={isAdmin === true} />
         <div className="border-t border-neutral-100 px-5 py-3 text-[11px] text-neutral-400">
-          © پُستیار ۱۴۰۳
+          © پُست‌یار ۱۴۰۳
         </div>
       </aside>
 
-      {/* Mobile drawer */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div
-            className="absolute inset-0 bg-neutral-900/50"
-            onClick={() => setSidebarOpen(false)}
-            aria-hidden="true"
-          />
-          <aside
-            className="absolute inset-y-0 start-0 flex w-72 max-w-[85vw] flex-col bg-white shadow-xl"
-            aria-label="فهرست اصلی"
-          >
-            <div className="flex h-16 items-center justify-between border-b border-neutral-100 px-4">
-              <Logo variant="full" />
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(false)}
-                aria-label="بستن منو"
-                className="focus-ring rounded-lg p-1.5 text-neutral-500 hover:bg-neutral-100"
-              >
-                <X aria-hidden="true" className="size-5" />
-              </button>
-            </div>
-            <SidebarContent isAdmin={isAdmin === true} onNavigate={() => setSidebarOpen(false)} />
-            <div className="border-t border-neutral-100 px-5 py-3 text-[11px] text-neutral-400">
-              © پُستیار ۱۴۰۳
-            </div>
-          </aside>
-        </div>
-      )}
-
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-neutral-200 bg-white/95 px-4 backdrop-blur lg:px-6">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="باز کردن منو"
-            aria-expanded={sidebarOpen}
-            className="focus-ring rounded-xl p-2 text-neutral-600 hover:bg-neutral-100 lg:hidden"
-          >
-            <Menu aria-hidden="true" className="size-5" />
-          </button>
-          <div className="lg:hidden">
-            <Logo variant="square" />
+        {/* Floating glass header — sticky, inset from top and sides (item 5). */}
+        <header className="sticky top-0 z-30">
+          <div className="mx-auto w-full max-w-7xl px-2 pt-2 sm:px-4 sm:pt-3">
+            <div className="flex h-14 items-center gap-1.5 rounded-2xl border border-white/70 bg-white/85 px-2 shadow-lg shadow-neutral-900/[0.07] backdrop-blur-xl supports-[backdrop-filter]:bg-white/72 sm:h-16 sm:gap-2 sm:px-4">
+              <div className="lg:hidden">
+                <Logo variant="square" />
+              </div>
+              <div className="flex-1" />
+              <NavLink
+                to="/app/notifications"
+                aria-label={`اعلان‌ها${unread > 0 ? `، ${faNumber(unread)} خوانده‌نشده` : ''}`}
+                className={({ isActive }) =>
+                  cn(
+                    'focus-ring relative rounded-xl p-2 text-neutral-600 transition-colors hover:bg-neutral-100',
+                    isActive && 'text-primary-700',
+                  )
+                }
+              >
+                <Bell aria-hidden="true" className="size-5" />
+                {unread > 0 && (
+                  <span className="absolute -top-0.5 -end-0.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
+                    {faNumber(unread)}
+                  </span>
+                )}
+              </NavLink>
+              <UserMenu onLogout={handleLogout} loggingOut={loggingOut} />
+            </div>
           </div>
-          <div className="flex-1" />
-          <NavLink
-            to="/app/notifications"
-            aria-label={`اعلان‌ها${unread > 0 ? `، ${faNumber(unread)} خوانده‌نشده` : ''}`}
-            className={({ isActive }) =>
-              cn(
-                'focus-ring relative rounded-xl p-2 text-neutral-600 transition-colors hover:bg-neutral-100',
-                isActive && 'text-primary-700',
-              )
-            }
-          >
-            <Bell aria-hidden="true" className="size-5" />
-            {unread > 0 && (
-              <span className="absolute -top-0.5 -end-0.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
-                {faNumber(unread)}
-              </span>
-            )}
-          </NavLink>
-          <UserMenu onLogout={handleLogout} loggingOut={loggingOut} />
         </header>
 
-        <main className="flex-1 px-4 py-6 lg:px-8">
+        {/* Bottom padding below lg clears the floating mobile navbar + safe area. */}
+        <main className="flex-1 px-3 py-4 pb-[calc(env(safe-area-inset-bottom,0px)+6.75rem)] sm:px-4 sm:py-6 lg:px-8 lg:pb-8">
           <div className="mx-auto w-full max-w-6xl">
             <Suspense fallback={<FullPageSpinner />}>
               <Outlet />
@@ -302,9 +210,12 @@ export default function AppLayout() {
         </main>
 
         <footer className="border-t border-neutral-200 px-4 py-3 text-center text-xs text-neutral-400 lg:px-8">
-          © پُستیار ۱۴۰۳
+          © پُست‌یار ۱۴۰۳
         </footer>
       </div>
+
+      {/* Mobile floating bottom navbar + «سایر» sheet (<lg only). */}
+      <MobileNavbar isAdmin={isAdmin === true} />
     </div>
   );
 }

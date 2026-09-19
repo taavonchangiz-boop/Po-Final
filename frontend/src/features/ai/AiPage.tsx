@@ -249,9 +249,9 @@ export default function AiPage() {
                   label="سرویس هوش مصنوعی"
                   value={provider}
                   onChange={(e) => setProvider(e.target.value)}
-                  hint="اختیاری؛ پیش‌فرض پُستیار"
+                  hint="اختیاری؛ پیش‌فرض پُست‌یار"
                 >
-                  <option value="">پیش‌فرض پُستیار</option>
+                  <option value="">پیش‌فرض پُست‌یار</option>
                   <option value="OPENAI">OpenAI</option>
                   <option value="GEMINI">Gemini</option>
                   <option value="DEEPSEEK">DeepSeek</option>

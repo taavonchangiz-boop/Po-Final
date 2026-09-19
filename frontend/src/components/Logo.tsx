@@ -33,7 +33,7 @@ export function Logo({ variant = 'square', className }: LogoProps) {
     return (
       <img
         src="/images/logo.webp"
-        alt="پُستیار"
+        alt="پُست‌یار"
         width={36}
         height={36}
         className={cn('h-9 w-9', className)}
@@ -46,7 +46,7 @@ export function Logo({ variant = 'square', className }: LogoProps) {
       <span className="inline-flex items-center rounded-lg bg-white p-0.5">
         <img
           src="/images/logo-full-white-bg.webp"
-          alt="پُستیار"
+          alt="پُست‌یار"
           width={110}
           height={60}
           className={cn('h-8 w-auto', className)}
@@ -58,7 +58,7 @@ export function Logo({ variant = 'square', className }: LogoProps) {
   return (
     <img
       src="/images/logo-full.webp"
-      alt="پُستیار"
+      alt="پُست‌یار"
       width={110}
       height={60}
       className={cn('h-8 w-auto', className)}

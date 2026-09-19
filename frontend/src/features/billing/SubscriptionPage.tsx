@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, Receipt } from 'lucide-react';
+import { CalendarClock, CreditCard, Receipt, WalletCards } from 'lucide-react';
 import { PageHeader } from '../../components/PageHeader';
 import { Card, CardBody, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -23,7 +23,9 @@ import {
   gatewayLabels,
   planLimitLabels,
   openGatewayRedirect,
+  settleMockPayment,
 } from './billingParts';
+import { CardPaymentDialog, usePaymentMethods } from './PaymentMethods';
 
 /**
  * Subscription — plans + current subscription + payment history.
@@ -31,13 +33,16 @@ import {
  * subscription.service.ts + payment.service.ts:
  *  - GET /plans (public) → { items: [{ id, code, name, description, priceMonthly, limits, sortOrder }] }.
  *  - GET /subscription → { subscription | null, plan: { id, code, name, priceMonthly }, limits }.
- *  - POST /subscription/change { planId } → { paymentId, redirectUrl, applied } —
+ *  - GET /subscription/usage → { plan, subscriptionStatus, expiresAt, daysRemaining,
+ *    usage: { posts, channels, bots } } (per-limit usage vs the enforced gates).
+ *  - POST /subscription/change { planId, renew? } → { paymentId, redirectUrl, applied } —
  *    zero-price plans apply immediately (applied=true); paid plans return the
- *    gateway redirect (browser is redirected server-verified callback flows).
- *  - GET /payments?page&limit → { items: [{ id, purpose, planId, amount, gateway,
- *    status, authority, gatewayRef, verifiedAt, createdAt }], total, page, limit }.
- *  - The endpoint does NOT return per-limit usage — usage bars are shown only
- *    for AI credits, which GET /ai/usage does expose.
+ *    gateway redirect; `renew: true` re-purchases the CURRENT active plan
+ *    (تمدید — same-plan conflict skipped, expiry extends without losing days).
+ *  - GET /payments?page&limit → { items: [...], total, page, limit }.
+ *  - MOCK/dev return flow: the gateway lands on /app/subscription?mock_payment=<id>
+ *    → we settle it via GET /payments/callback/mock (idempotent) → navigate to
+ *    the returned ?payment=ok|failed path which drives the final toast.
  */
 
 interface PlanRecord {
@@ -71,6 +76,14 @@ interface AiUsageResponse {
   month?: string;
 }
 
+interface SubscriptionUsageResponse {
+  usage?: {
+    posts?: { used?: number; limit?: number };
+    channels?: { used?: number; limit?: number };
+    bots?: { used?: number; limit?: number };
+  };
+}
+
 interface PaymentRecord {
   id: number | string;
   purpose?: string;
@@ -101,7 +114,9 @@ export default function SubscriptionPage() {
   usePageTitle('اشتراک');
   const queryClient = useQueryClient();
   const pushToast = useUiStore((s) => s.pushToast);
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [settlingMock, setSettlingMock] = useState(false);
 
   // Gateway browser-return flow: /app/subscription?payment=ok|failed.
   const paymentResult = searchParams.get('payment');
@@ -121,6 +136,37 @@ export default function SubscriptionPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentResult]);
 
+  // MOCK/dev gateway return: /app/subscription?mock_payment=<id>&authority=…
+  // The MOCK gateway auto-lands here; hitting the public, idempotent callback
+  // verifies the payment server-side and returns the final SPA redirect path.
+  const mockPaymentId = searchParams.get('mock_payment');
+  useEffect(() => {
+    if (!mockPaymentId) return;
+    let cancelled = false;
+    setSettlingMock(true);
+    pushToast('info', 'در حال بررسی پرداخت آزمایشی…');
+    settleMockPayment(mockPaymentId, searchParams.get('authority'))
+      .then((redirect) => {
+        if (cancelled) return;
+        navigate(redirect, { replace: true }); // → ?payment=ok|failed handler above
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        if (e instanceof ApiError && e.status === 401) return;
+        pushToast('error', `تسویه پرداخت آزمایشی ناموفق بود: ${errorMessage(e)}`);
+        void setSearchParams({}, { replace: true });
+      })
+      .finally(() => {
+        // Always reset: navigating to ?payment=ok re-renders (and nulls the
+        // mock param) without unmounting, so the flag must clear here too.
+        setSettlingMock(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mockPaymentId]);
+
   const plans = useQuery({
     queryKey: ['plans'],
     queryFn: () => get<{ items?: PlanRecord[] }>('/plans'),
@@ -136,27 +182,46 @@ export default function SubscriptionPage() {
     queryFn: () => get<AiUsageResponse>('/ai/usage'),
   });
 
+  // Real usage vs plan limits (same cached query the dashboard widget uses).
+  const usageData = useQuery({
+    queryKey: ['subscription', 'usage'],
+    queryFn: () => get<SubscriptionUsageResponse>('/subscription/usage'),
+  });
+
+  const sub = current.data?.subscription;
   const currentPlanId = current.data?.plan?.id;
+  // «پلن فعلی» only while the subscription is genuinely live — an EXPIRED plan
+  // must be re-selectable from the grid (feedback item 13).
+  const subExpiresMs = sub?.expiresAt ? new Date(sub.expiresAt).getTime() : NaN;
+  const subIsActive =
+    sub?.status === 'ACTIVE' && Number.isFinite(subExpiresMs) && subExpiresMs > Date.now();
   const isCurrentPlan = (plan: PlanRecord) =>
-    currentPlanId !== undefined && String(currentPlanId) === String(plan.id);
+    subIsActive && currentPlanId !== undefined && String(currentPlanId) === String(plan.id);
 
   const changeMutation = useMutation({
-    mutationFn: (planId: number | string) =>
+    mutationFn: (input: { planId: number | string; renew?: boolean }) =>
       post<{ paymentId: number | null; redirectUrl: string | null; applied: boolean }>(
         '/subscription/change',
-        { planId },
+        { planId: input.planId, ...(input.renew ? { renew: true } : {}) },
       ),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       if (data?.applied) {
-        pushToast('success', 'پلن شما با موفقیت فعال شد.');
+        pushToast(
+          'success',
+          variables.renew ? 'اشتراک شما با موفقیت تمدید شد.' : 'پلن شما با موفقیت فعال شد.',
+        );
         void queryClient.invalidateQueries({ queryKey: ['subscription'] });
         void queryClient.invalidateQueries({ queryKey: ['payments'] });
         void queryClient.invalidateQueries({ queryKey: ['me'] });
+        void queryClient.invalidateQueries({ queryKey: ['ai', 'usage'] });
         return;
       }
       if (data?.redirectUrl) {
         pushToast('info', 'در حال انتقال به درگاه پرداخت…');
-        openGatewayRedirect(data.redirectUrl);
+        const where = openGatewayRedirect(data.redirectUrl);
+        if (where === 'none') {
+          pushToast('error', 'آدرس درگاه پرداخت دریافت نشد؛ لطفاً دوباره تلاش کنید.');
+        }
         return;
       }
       if (data?.paymentId) {
@@ -164,7 +229,9 @@ export default function SubscriptionPage() {
           'info',
           `پرداخت #${toFa(data.paymentId)} ایجاد شد اما درگاه در دسترس نیست؛ بعداً از تاریخچه پرداخت پیگیری کنید.`,
         );
+        return;
       }
+      pushToast('error', 'پاسخ نامعتبر از سرور دریافت شد؛ لطفاً دوباره تلاش کنید.');
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError && e.status === 401) return;
@@ -177,8 +244,23 @@ export default function SubscriptionPage() {
     buildPath: (page, limit) => `/payments?page=${page}&limit=${limit}`,
   });
 
-  const sub = current.data?.subscription;
+  // Payment methods (task 10-d): when the admin enables card-to-card, paid plans
+  // also offer a manual «کارت به کارت» flow; when the online gateway is disabled
+  // the primary button hands over to the card dialog.
+  const methods = usePaymentMethods();
+  const onlineEnabled = methods.data?.online?.enabled === true;
+  const cardEnabled = methods.data?.card?.enabled === true;
+  const [cardPlan, setCardPlan] = useState<PlanRecord | null>(null);
+
   const remaining = daysRemaining(sub?.expiresAt);
+
+  /** Plan-limit key → current usage (only where the API exposes a counter). */
+  const usageByKey: Record<string, number | undefined> = {
+    postsPerMonth: usageData.data?.usage?.posts?.used,
+    channels: usageData.data?.usage?.channels?.used,
+    bots: usageData.data?.usage?.bots?.used,
+    aiCredits: aiUsage.data?.used,
+  };
 
   return (
     <>
@@ -231,30 +313,68 @@ export default function SubscriptionPage() {
                 </p>
               </div>
 
-              {/* Limits list (usage bars only for AI credits — the only usage the API exposes) */}
+              {/* تمدید اشتراک (item 13): re-purchases the CURRENT plan — the backend
+                  extends from the current expiry, so no remaining days are lost. */}
+              {subIsActive &&
+              typeof current.data?.plan?.priceMonthly === 'number' &&
+              current.data.plan.priceMonthly > 0 &&
+              currentPlanId !== undefined ? (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-primary-50/60 p-3">
+                  <p className="flex items-center gap-1.5 text-xs leading-6 text-neutral-600">
+                    <CalendarClock aria-hidden="true" className="size-4 shrink-0 text-primary-700" />
+                    با تمدید، یک ماه به پایان دورهٔ فعلی اضافه می‌شود و روزهای باقی‌مانده حفظ می‌شوند.
+                  </p>
+                  <Button
+                    size="sm"
+                    loading={
+                      changeMutation.isPending &&
+                      changeMutation.variables?.renew === true &&
+                      String(changeMutation.variables?.planId) === String(currentPlanId)
+                    }
+                    disabled={changeMutation.isPending || settlingMock}
+                    onClick={() => changeMutation.mutate({ planId: currentPlanId, renew: true })}
+                  >
+                    تمدید اشتراک
+                  </Button>
+                </div>
+              ) : null}
+
+              {/* Limits list — real usage bars wherever the API exposes usage:
+                  posts/channels/bots from GET /subscription/usage, AI credits
+                  from GET /ai/usage; schedules/storage have no counter yet. */}
               <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {planLimitLabels.map(({ key, label }) => {
                   const limit = current.data?.limits?.[key];
-                  const isAi = key === 'aiCredits';
-                  const aiUsed = isAi ? (aiUsage.data?.used ?? 0) : 0;
-                  const pct = isAi && typeof limit === 'number' && limit > 0 ? Math.min(100, Math.round((aiUsed / limit) * 100)) : 0;
+                  const used = usageByKey[key];
+                  const hasUsage = typeof used === 'number';
+                  const pct = hasUsage && typeof limit === 'number' && limit > 0 ? Math.min(100, Math.round(((used as number) / limit) * 100)) : 0;
                   return (
                     <li key={key} className="rounded-xl border border-neutral-200 p-3">
                       <div className="flex items-center justify-between gap-2 text-sm">
                         <span className="text-neutral-600">{label}</span>
-                        <span className="font-bold text-neutral-900">{typeof limit === 'number' ? toFa(limit) : '—'}</span>
+                        <span className="text-xs text-neutral-500">
+                          {hasUsage ? (
+                            <>
+                              <span className="font-bold text-neutral-900">{toFa(used as number)}</span>
+                              {' از '}
+                              {typeof limit === 'number' ? toFa(limit) : '—'}
+                            </>
+                          ) : (
+                            <span className="font-bold text-neutral-900">{typeof limit === 'number' ? toFa(limit) : '—'}</span>
+                          )}
+                        </span>
                       </div>
-                      {isAi && typeof limit === 'number' && limit > 0 && (
+                      {hasUsage && typeof limit === 'number' && limit > 0 && (
                         <div
                           role="progressbar"
                           aria-valuenow={pct}
                           aria-valuemin={0}
                           aria-valuemax={100}
-                          aria-label="مصرف اعتبار هوش مصنوعی در برابر سهمیه پلن"
+                          aria-label={`مصرف ${label} در برابر سقف پلن`}
                           className="mt-2 h-2 w-full overflow-hidden rounded-full bg-neutral-100"
                         >
                           <div
-                            className={'h-full rounded-full ' + (pct >= 90 ? 'bg-red-500' : 'bg-primary-600')}
+                            className={'h-full rounded-full ' + (pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-primary-600')}
                             style={{ width: `${pct}%` }}
                           />
                         </div>
@@ -318,20 +438,34 @@ export default function SubscriptionPage() {
                           </li>
                         ))}
                       </ul>
-                      <div className="mt-4">
+                      <div className="mt-4 space-y-2">
                         {currentPlan ? (
                           <Button variant="secondary" className="w-full" disabled>
                             پلن فعلی
                           </Button>
                         ) : (
-                          <Button
-                            className="w-full"
-                            loading={changeMutation.isPending && String(changeMutation.variables) === String(plan.id)}
-                            disabled={changeMutation.isPending}
-                            onClick={() => changeMutation.mutate(plan.id)}
-                          >
-                            {typeof plan.priceMonthly === 'number' && plan.priceMonthly > 0 ? 'انتخاب و پرداخت' : 'انتخاب پلن'}
-                          </Button>
+                          <>
+                            {onlineEnabled || !cardEnabled ? (
+                              <Button
+                                className="w-full"
+                                loading={
+                                  changeMutation.isPending &&
+                                  changeMutation.variables?.renew !== true &&
+                                  String(changeMutation.variables?.planId) === String(plan.id)
+                                }
+                                disabled={changeMutation.isPending || settlingMock}
+                                onClick={() => changeMutation.mutate({ planId: plan.id })}
+                              >
+                                {typeof plan.priceMonthly === 'number' && plan.priceMonthly > 0 ? 'انتخاب و پرداخت' : 'انتخاب پلن'}
+                              </Button>
+                            ) : null}
+                            {cardEnabled && typeof plan.priceMonthly === 'number' && plan.priceMonthly > 0 ? (
+                              <Button variant="secondary" className="w-full" onClick={() => setCardPlan(plan)}>
+                                <WalletCards aria-hidden="true" className="size-4" />
+                                پرداخت کارت به کارت
+                              </Button>
+                            ) : null}
+                          </>
                         )}
                       </div>
                     </CardBody>
@@ -397,13 +531,28 @@ export default function SubscriptionPage() {
         </div>
 
         <p className="text-xs leading-6 text-neutral-400">
-          پرداخت‌ها از طریق درگاه‌های بانکی انجام و پس از بازگشت، به‌صورت خودکار تأیید می‌شوند. در صورت بروز مشکل با{' '}
+          پرداخت‌ها از طریق درگاه‌های بانکی انجام و پس از بازگشت، به‌صورت خودکار تأیید می‌شوند؛ در صورت فعال‌بودن، گزینهٔ کارت به کارت نیز در دسترس است و پس از تأیید مدیر فعال می‌شود. در صورت بروز مشکل با{' '}
           <Link to="/app/support" className="font-medium text-primary-700 hover:underline">
             پشتیبانی
           </Link>{' '}
           تماس بگیرید.
         </p>
       </div>
+
+      {/* ----------------------- card-to-card payment dialog ----------------------- */}
+      <CardPaymentDialog
+        open={cardPlan !== null}
+        onClose={() => setCardPlan(null)}
+        planId={String(cardPlan?.id ?? '')}
+        amount={typeof cardPlan?.priceMonthly === 'number' && cardPlan.priceMonthly > 0 ? cardPlan.priceMonthly : undefined}
+        title={`پرداخت کارت به کارت — ${cardPlan?.name || 'پلن'}`}
+        description="مبلغ پلن را واریز کنید و شماره پیگیری را ثبت نمایید."
+        onSubmitted={() => {
+          setCardPlan(null);
+          void queryClient.invalidateQueries({ queryKey: ['subscription'] });
+          void queryClient.invalidateQueries({ queryKey: ['payments'] });
+        }}
+      />
     </>
   );
 }

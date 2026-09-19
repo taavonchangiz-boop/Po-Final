@@ -81,6 +81,14 @@ export function faDayLabel(isoDay: string): string {
   return toFa(`${jm}/${jd}`);
 }
 
+/** Jalali long label for an ISO day ('2025-01-15' → '۲۵ دی ۱۴۰۳') — chart tooltips. */
+export function faDayLongLabel(isoDay: string): string {
+  const date = new Date(`${isoDay}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return isoDay;
+  const { jy, jm, jd } = toJalaali(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+  return `${toFa(jd)} ${JALALI_MONTHS[jm - 1]} ${toFa(jy)}`;
+}
+
 /** '2025-01' (UTC month, as returned by GET /ai/usage) → 'دی ۱۴۰۳'. */
 export function faMonthLabel(month: string): string {
   const match = /^(\d{4})-(\d{2})$/.exec(month);

@@ -235,5 +235,5 @@ if command -v curl >/dev/null 2>&1; then
 fi
 
 step "Complete / تمام"
-printf '%s\n' "Deployment finished successfully. Spread the word — پُستیار آماده است."
+printf '%s\n' "Deployment finished successfully. Spread the word — پُست‌یار آماده است."
 exit 0

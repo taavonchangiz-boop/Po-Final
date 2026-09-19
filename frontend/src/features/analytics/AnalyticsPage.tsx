@@ -8,7 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Table, THead, TBody, TR, TH, TD } from '../../components/ui/Table';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Skeleton, SkeletonText } from '../../components/ui/Skeleton';
-import { LineChart, BarChart, type ChartPoint } from '../../components/ui/Chart';
+import DailyActivityChart from './DailyActivityChart';
 import { usePageTitle } from '../../app/usePageTitle';
 import { get } from '../../lib/api';
 import { faNumber, faPercent, faDateTime, toFa } from '../../lib/format';
@@ -94,14 +94,7 @@ export default function AnalyticsPage() {
     queryFn: () => get<{ series?: SeriesPoint[] }>(`/analytics/publishing?days=${days}`),
   });
 
-  const sentPoints: ChartPoint[] = (publishing.data?.series ?? []).map((p) => ({
-    label: p.date ? faDayLabel(p.date) : '',
-    value: p.sent ?? 0,
-  }));
-  const failedPoints: ChartPoint[] = (publishing.data?.series ?? []).map((p) => ({
-    label: p.date ? faDayLabel(p.date) : '',
-    value: p.failed ?? 0,
-  }));
+  // Rendered RTL (newest on the LEFT) by DailyActivityChart — item 12.
 
   /* ----------------------------------- KPIs ----------------------------------- */
   const overview = useQuery({
@@ -217,17 +210,16 @@ export default function AnalyticsPage() {
               <Skeleton className="h-56 w-full" />
             ) : publishing.error ? (
               <ErrorCard message={errorMessage(publishing.error)} onRetry={() => void publishing.refetch()} />
+            ) : (publishing.data?.series ?? []).length === 0 ? (
+              <EmptyState
+                title="ارسالی در این بازه ثبت نشده است"
+                description="پس از اولین انتشار، روند روزانهٔ ارسال‌ها اینجا نمایش داده می‌شود."
+              />
             ) : (
-              <div className="grid gap-6 lg:grid-cols-2">
-                <div>
-                  <p className="mb-2 text-xs font-medium text-neutral-500">ارسال موفق</p>
-                  <LineChart data={sentPoints} ariaLabel="نمودار خطی ارسال‌های موفق روزانه" />
-                </div>
-                <div>
-                  <p className="mb-2 text-xs font-medium text-neutral-500">ارسال ناموفق</p>
-                  <BarChart data={failedPoints} ariaLabel="نمودار ستونی ارسال‌های ناموفق روزانه" />
-                </div>
-              </div>
+              <DailyActivityChart
+                series={publishing.data?.series ?? []}
+                ariaLabel="نمودار ستونی فعالیت روزانهٔ ارسال، موفق و ناموفق، با محور زمانی راست‌به‌چپ"
+              />
             )}
           </CardBody>
         </Card>

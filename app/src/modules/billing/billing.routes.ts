@@ -60,18 +60,70 @@ export function registerBillingRoutes(app: FastifyInstance): void {
     });
   });
 
+  /** Usage dashboard: effective plan + days remaining + counters vs plan limits. */
+  app.get('/api/v1/subscription/usage', { preHandler: requireAuth }, async (request, reply) => {
+    const summary = await SubscriptionService.getUsageSummary(request.currentUser!.id);
+    return sendOk(reply, {
+      plan: summary.plan,
+      subscriptionStatus: summary.subscriptionStatus,
+      expiresAt: summary.expiresAt,
+      daysRemaining: summary.daysRemaining,
+      usage: summary.usage,
+    });
+  });
+
   app.post(
     '/api/v1/subscription/change',
     { preHandler: requireAuth, ...publishLimiter.config },
     async (request, reply) => {
-      const parsed = z.object({ planId: z.coerce.number().int().min(1) }).safeParse(request.body);
+      const parsed = z
+        .object({
+          planId: z.coerce.number().int().min(1),
+          // renew:true = explicit تمدید of the CURRENT active plan (skips the
+          // same-plan conflict; extends from the current expiry after payment).
+          renew: z.boolean().optional(),
+        })
+        .safeParse(request.body);
       if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
-      const result = await SubscriptionService.changePlan(request.currentUser!.id, parsed.data.planId);
+      const result = await SubscriptionService.changePlan(request.currentUser!.id, parsed.data.planId, {
+        renew: parsed.data.renew,
+      });
       return sendOk(reply, result, result.applied ? 200 : 201);
     },
   );
 
   /* -------------------------------- Payments -------------------------------- */
+  /** Available payment methods (admin settings driven; card info only when enabled). */
+  app.get('/api/v1/billing/payment-methods', { preHandler: requireAuth }, async (_request, reply) => {
+    const methods = await PaymentService.getPaymentMethods();
+    return sendOk(reply, methods);
+  });
+
+  /** Card-to-card (manual) payment request: creates a PENDING payment with the transfer reference. */
+  app.post('/api/v1/payments/card', { preHandler: requireAuth, ...publishLimiter.config }, async (request, reply) => {
+    const parsed = z
+      .object({
+        purpose: z.enum(['SUBSCRIPTION', 'WALLET_TOPUP']),
+        planId: z.coerce.number().int().min(1).optional(),
+        amount: z.coerce.number().int().min(1).optional(),
+        reference: z.string().min(4).max(64),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
+
+    const result = await PaymentService.createCardPayment(request.currentUser!.id, {
+      purpose: parsed.data.purpose,
+      planId: parsed.data.planId,
+      amount: parsed.data.amount,
+      reference: parsed.data.reference,
+    });
+    return sendCreated(reply, {
+      paymentId: result.paymentId,
+      amount: result.amount,
+      status: result.status,
+    });
+  });
+
   app.post('/api/v1/payments', { preHandler: requireAuth, ...publishLimiter.config }, async (request, reply) => {
     const parsed = z
       .object({
@@ -104,8 +156,10 @@ export function registerBillingRoutes(app: FastifyInstance): void {
         purpose: p.purpose,
         planId: p.planId,
         amount: p.amount,
+        method: p.method,
         gateway: p.gateway,
         status: p.status,
+        reference: p.reference,
         authority: p.authority,
         gatewayRef: p.gatewayRef,
         verifiedAt: p.verifiedAt,

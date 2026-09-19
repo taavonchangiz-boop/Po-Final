@@ -9,14 +9,20 @@ import { faMoney, toFa } from '../../lib/format';
  *  - audit_logs rows carry actorUserId only (no actor name) — the UI shows
  *    «کاربر #id»; there is no password display anywhere (passwordHash is never
  *    selected by the admin service).
- *  - Admin cannot READ a ticket thread (no GET /admin/tickets/:id; the user
- *    thread endpoint is owner-scoped) and cannot SET ticket status directly —
- *    only POST /admin/tickets/:id/reply exists (flips status to ANSWERED).
+ *  - Ticket thread reading for staff is available via GET /admin/tickets/:id
+ *    (with attachment metadata — task 10-d); status changes + replies are
+ *    audited.
  */
 
 export const userStatusLabels: Record<string, string> = {
   ACTIVE: 'فعال',
   SUSPENDED: 'معلق',
+};
+
+/** payments.method (task 10-d): ONLINE = gateway session, CARD = card-to-card. */
+export const paymentMethodLabels: Record<string, string> = {
+  ONLINE: 'درگاه آنلاین',
+  CARD: 'کارت به کارت',
 };
 
 export const userStatusTones: Record<string, 'success' | 'danger' | 'neutral'> = {
@@ -45,6 +51,9 @@ export const auditActionLabels: Record<string, string> = {
   'admin.user.updated': 'ویرایش کاربر',
   'admin.plan.updated': 'ویرایش پلن',
   'admin.settings.updated': 'ویرایش تنظیمات',
+  'admin.payment_settings.updated': 'ویرایش تنظیمات پرداخت',
+  'admin.payment.approved': 'تأیید پرداخت کارت به کارت',
+  'admin.payment.rejected': 'رد پرداخت کارت به کارت',
   'admin.ticket.replied': 'پاسخ به تیکت',
   // auth
   'user.registration': 'ثبت‌نام',
@@ -65,6 +74,7 @@ export const auditActionLabels: Record<string, string> = {
   'wordpress.site.revoked': 'باطل‌کردن سایت',
   // billing
   'payment.created': 'ایجاد پرداخت',
+  'payment.card_submitted': 'ثبت رسید کارت به کارت',
   'payment.completed': 'تأیید پرداخت',
   'payment.failed': 'شکست پرداخت',
   'subscription.created': 'فعال‌سازی اشتراک',

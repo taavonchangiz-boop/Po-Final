@@ -1,7 +1,7 @@
 # Postyar — Product Specification (v1.0.0)
 
 ## 1. Product definition
-پُستیار (Postyar) is a Persian-first SaaS platform for managing content publishing, channels, bots, automation, AI, WooCommerce integration, gold-rate publishing, subscriptions, notifications, and analytics across **Telegram, Bale, and Rubika**.
+پُست‌یار (Postyar) is a Persian-first SaaS platform for managing content publishing, channels, bots, automation, AI, WooCommerce integration, gold-rate publishing, subscriptions, notifications, and analytics across **Telegram, Bale, and Rubika**.
 
 Core proposition:
 ```

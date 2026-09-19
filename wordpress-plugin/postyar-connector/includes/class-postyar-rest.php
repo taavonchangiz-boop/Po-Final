@@ -2,7 +2,7 @@
 /**
  * مسیرهای REST افزونه — namespace: postyar-connector/v1
  *
- *  GET /products  : همگام‌سازی کششی محصولات ووکامرس (پُستیار ← سایت).
+ *  GET /products  : همگام‌سازی کششی محصولات ووکامرس (پُست‌یار ← سایت).
  *  GET /ping      : اطمینان‌سنجی اتصال و نسخه‌ها.
  *
  * احراز هویت فقط با امضای HMAC (بدون کوکی، بدون nonce):
@@ -115,7 +115,7 @@ class Postyar_REST {
                 if ( '' === $settings['postyar_site_public_id'] || '' === $secret ) {
                         return new WP_Error(
                                 'postyar_not_paired',
-                                'افزونه هنوز با پُستیار جفت‌سازی نشده است.',
+                                'افزونه هنوز با پُست‌یار جفت‌سازی نشده است.',
                                 array( 'status' => 503 )
                         );
                 }
@@ -303,7 +303,7 @@ class Postyar_REST {
         }
 
         /**
-         * تبدیل شیء محصول به آرایهٔ قراردادی پُستیار (مطابق PRODUCT_PAYLOAD_SCHEMA سرویس).
+         * تبدیل شیء محصول به آرایهٔ قراردادی پُست‌یار (مطابق PRODUCT_PAYLOAD_SCHEMA سرویس).
          *
          * @param WC_Product $product محصول.
          *

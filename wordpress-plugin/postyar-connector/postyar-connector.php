@@ -1,12 +1,12 @@
 <?php
 /**
- * Plugin Name:       Postyar Connector | پُستیار کانکتور
+ * Plugin Name:       Postyar Connector | پُست‌یار کانکتور
  * Plugin URI:        https://postyar.ir
- * Description:       اتصال فروشگاه ووکامرس شما به سکوی پُستیار؛ همگام‌سازی محصولات و اطلاع‌رسانی رویدادها با امضای HMAC امن، بدون ارسال کلید مخفی.
+ * Description:       اتصال فروشگاه ووکامرس شما به سکوی پُست‌یار؛ همگام‌سازی محصولات و اطلاع‌رسانی رویدادها با امضای HMAC امن، بدون ارسال کلید مخفی.
  * Version:           1.0.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
- * Author:            Postyar | پُستیار
+ * Author:            Postyar | پُست‌یار
  * Author URI:        https://postyar.ir
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html

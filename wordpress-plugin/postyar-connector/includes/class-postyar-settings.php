@@ -108,8 +108,8 @@ class Postyar_Settings {
 	 */
 	public static function add_settings_page() {
 		add_options_page(
-			__( 'پُستیار کانکتور', 'postyar-connector' ),
-			__( 'پُستیار کانکتور', 'postyar-connector' ),
+			__( 'پُست‌یار کانکتور', 'postyar-connector' ),
+			__( 'پُست‌یار کانکتور', 'postyar-connector' ),
 			'manage_options',
 			self::PAGE_SLUG,
 			array( __CLASS__, 'render_page' )
@@ -145,7 +145,7 @@ class Postyar_Settings {
 
 		$input = is_array( $input ) ? $input : array();
 
-		// نشانی پایهٔ پُستیار — فقط http/https با میزبان غیرخالی (محافظ SSRF).
+		// نشانی پایهٔ پُست‌یار — فقط http/https با میزبان غیرخالی (محافظ SSRF).
 		$api_url = isset( $input['postyar_api_url'] ) ? sanitize_text_field( wp_unslash( (string) $input['postyar_api_url'] ) ) : '';
 		if ( '' !== $api_url ) {
 			$parts  = wp_parse_url( $api_url );
@@ -156,7 +156,7 @@ class Postyar_Settings {
 				add_settings_error(
 					'postyar_connector_settings',
 					'postyar_invalid_api_url',
-					'نشانی پُستیار نامعتبر است؛ باید با http یا https شروع شود و میزبان داشته باشد.',
+					'نشانی پُست‌یار نامعتبر است؛ باید با http یا https شروع شود و میزبان داشته باشد.',
 					'error'
 				);
 				$api_url = '';
@@ -166,7 +166,7 @@ class Postyar_Settings {
 		}
 		$clean['postyar_api_url'] = $api_url;
 
-		// شناسهٔ عمومی سایت (از پنل پُستیار دریافت می‌شود).
+		// شناسهٔ عمومی سایت (از پنل پُست‌یار دریافت می‌شود).
 		$public_id = isset( $input['postyar_site_public_id'] ) ? sanitize_text_field( wp_unslash( (string) $input['postyar_site_public_id'] ) ) : '';
 		if ( '' !== $public_id && ! preg_match( '/^[A-Za-z0-9_\-]{4,128}$/', $public_id ) ) {
 			add_settings_error(
@@ -210,7 +210,7 @@ class Postyar_Settings {
 			add_settings_error(
 				'postyar_connector_settings',
 				'postyar_invalid_secret',
-				'کلید مخفی نامعتبر است؛ کلیدِ نمایش‌داده‌شده در پنل پُستیار را کامل و بدون فاصله وارد کنید.',
+				'کلید مخفی نامعتبر است؛ کلیدِ نمایش‌داده‌شده در پنل پُست‌یار را کامل و بدون فاصله وارد کنید.',
 				'error'
 			);
 		} else {
@@ -260,9 +260,9 @@ class Postyar_Settings {
 		$rest_url = rest_url( 'postyar-connector/v1/products' );
 		?>
 		<div class="wrap postyar-wrap" dir="rtl">
-			<h1><?php esc_html_e( 'پُستیار کانکتور', 'postyar-connector' ); ?></h1>
+			<h1><?php esc_html_e( 'پُست‌یار کانکتور', 'postyar-connector' ); ?></h1>
 			<p class="postyar-lead">
-				<?php esc_html_e( 'این افزونه فروشگاه ووکامرس شما را به سکوی پُستیار متصل می‌کند. اطلاعات جفت‌سازی را از پنل پُستیار (بخش سایت‌های وردپرس) دریافت کنید.', 'postyar-connector' ); ?>
+				<?php esc_html_e( 'این افزونه فروشگاه ووکامرس شما را به سکوی پُست‌یار متصل می‌کند. اطلاعات جفت‌سازی را از پنل پُست‌یار (بخش سایت‌های وردپرس) دریافت کنید.', 'postyar-connector' ); ?>
 			</p>
 
 			<?php if ( 'saved' === $secret_msg ) : ?>
@@ -277,12 +277,12 @@ class Postyar_Settings {
 
 				<table class="form-table" role="presentation">
 					<tr>
-						<th scope="row"><label for="postyar_api_url"><?php esc_html_e( 'نشانی پُستیار', 'postyar-connector' ); ?></label></th>
+						<th scope="row"><label for="postyar_api_url"><?php esc_html_e( 'نشانی پُست‌یار', 'postyar-connector' ); ?></label></th>
 						<td>
 							<input type="url" id="postyar_api_url" name="postyar_connector_settings[postyar_api_url]"
 								value="<?php echo esc_attr( $settings['postyar_api_url'] ); ?>" class="regular-text ltr"
 								placeholder="https://app.postyar.ir" autocomplete="off" />
-							<p class="description"><?php esc_html_e( 'نشانی پایهٔ سکوی پُستیار، مانند https://app.postyar.ir', 'postyar-connector' ); ?></p>
+							<p class="description"><?php esc_html_e( 'نشانی پایهٔ سکوی پُست‌یار، مانند https://app.postyar.ir', 'postyar-connector' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -291,7 +291,7 @@ class Postyar_Settings {
 							<input type="text" id="postyar_site_public_id" name="postyar_connector_settings[postyar_site_public_id]"
 								value="<?php echo esc_attr( $settings['postyar_site_public_id'] ); ?>" class="regular-text code ltr"
 								placeholder="py_site_xxxxxxxx" autocomplete="off" />
-							<p class="description"><?php esc_html_e( 'شناسهٔ عمومی سایت که هنگام ساخت سایت در پنل پُستیار به شما نشان داده می‌شود.', 'postyar-connector' ); ?></p>
+							<p class="description"><?php esc_html_e( 'شناسهٔ عمومی سایت که هنگام ساخت سایت در پنل پُست‌یار به شما نشان داده می‌شود.', 'postyar-connector' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -327,11 +327,11 @@ class Postyar_Settings {
 								autocomplete="new-password" />
 							<?php submit_button( __( 'ذخیرهٔ کلید', 'postyar-connector' ), 'secondary', 'submit', false ); ?>
 						</p>
-						<p class="description"><?php esc_html_e( 'با چرخش کلید در پنل پُستیار، کلید جدید را همین‌جا وارد کنید. کلید پس از ذخیره نمایش داده نمی‌شود.', 'postyar-connector' ); ?></p>
+						<p class="description"><?php esc_html_e( 'با چرخش کلید در پنل پُست‌یار، کلید جدید را همین‌جا وارد کنید. کلید پس از ذخیره نمایش داده نمی‌شود.', 'postyar-connector' ); ?></p>
 					</form>
 				</details>
 			<?php else : ?>
-				<p class="description"><?php esc_html_e( 'کلید مخفی هنگام ساخت سایت در پنل پُستیار فقط یک‌بار نمایش داده می‌شود؛ آن را همین‌جا ذخیره کنید.', 'postyar-connector' ); ?></p>
+				<p class="description"><?php esc_html_e( 'کلید مخفی هنگام ساخت سایت در پنل پُست‌یار فقط یک‌بار نمایش داده می‌شود؛ آن را همین‌جا ذخیره کنید.', 'postyar-connector' ); ?></p>
 				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 					<input type="hidden" name="action" value="postyar_save_secret" />
 					<?php wp_nonce_field( 'postyar_save_secret', 'postyar_secret_nonce' ); ?>

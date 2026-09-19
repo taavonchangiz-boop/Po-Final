@@ -64,7 +64,7 @@ const GOLD_DEFAULT_TEMPLATE = [
   '📈 نرخ لحظه‌ای بازار:',
   '{table}',
   '—',
-  'ارسال‌شده توسط پستیار',
+  'ارسال‌شده توسط پست‌یار',
 ].join('\n');
 
 const SETTING_SEEDS: Array<{ key: string; value: unknown }> = [

@@ -12,3 +12,5 @@ storage/
 .DS_Store
 backups/
 .deps-hash
+deploy-bundle/
+frontend/dist/

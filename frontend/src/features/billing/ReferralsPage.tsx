@@ -62,7 +62,7 @@ export default function ReferralsPage() {
 
   const code = referrals.data?.code ?? null;
   const shareText = code
-    ? `من در پُستیار محتوایم را یک‌جا به تلگرام، بله و روبیکا منتشر می‌کنم. با کد دعوت «${code}» ثبت‌نام کن: ${typeof window !== 'undefined' ? window.location.origin : ''}`
+    ? `من در پُست‌یار محتوایم را یک‌جا به تلگرام، بله و روبیکا منتشر می‌کنم. با کد دعوت «${code}» ثبت‌نام کن: ${typeof window !== 'undefined' ? window.location.origin : ''}`
     : '';
 
   async function copyCode() {
@@ -80,7 +80,7 @@ export default function ReferralsPage() {
     <>
       <PageHeader
         title="دعوت دوستان"
-        description="با معرفی پُستیار، روی اولین پرداخت هر کاربر جدید پاداش بگیرید"
+        description="با معرفی پُست‌یار، روی اولین پرداخت هر کاربر جدید پاداش بگیرید"
       />
 
       <div className="space-y-6">

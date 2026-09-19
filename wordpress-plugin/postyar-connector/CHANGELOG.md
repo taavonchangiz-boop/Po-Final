@@ -1,9 +1,9 @@
-# Changelog — Postyar Connector | پُستیار کانکتور
+# Changelog — Postyar Connector | پُست‌یار کانکتور
 
 ## 1.0.0 — انتشار نخست
 
 ### Added
-- جفت‌سازی با سکوی پُستیار: نشانی پُستیار + شناسهٔ عمومی سایت + کلید مخفی (نمایش‌داده‌شده یک‌بار در پنل پُستیار).
+- جفت‌سازی با سکوی پُست‌یار: نشانی پُست‌یار + شناسهٔ عمومی سایت + کلید مخفی (نمایش‌داده‌شده یک‌بار در پنل پُست‌یار).
 - همگام‌سازی کششی محصولات: `GET /wp-json/postyar-connector/v1/products` (سقف `per_page=50`، احراز هویت فقط با امضای HMAC + پنجرهٔ زمانی ±۳۰۰ ثانیه + سقف نرخ).
 - مسیر تشخیصی: `GET /wp-json/postyar-connector/v1/ping` → `{ok, site, wp_version, wc_active, plugin_version}`.
 - وب‌هوک‌های رویدادی به `{postyar_api}/api/v1/webhooks/wordpress/{publicId}` با هدرهای `X-Postyar-Signature`، `X-Postyar-Timestamp`، `X-Postyar-Site`، `X-Postyar-Event-Id` (UUID برای حذف تکراری) و `X-Postyar-Event-Type`:

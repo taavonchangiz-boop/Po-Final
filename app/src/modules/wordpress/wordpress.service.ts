@@ -247,7 +247,7 @@ export const WordpressService = {
 
   pairingInstructions(site: WpSiteRow, secret: string): string {
     return [
-      'اتصال افزونه پستیار:',
+      'اتصال افزونه پست‌یار:',
       `۱. افزونه «Postyar Connector» را در وردپرس نصب و فعال کنید.`,
       `۲. نشانی سایت: ${site.siteUrl}`,
       `۳. شناسه عمومی (Site Public ID): ${site.publicId}`,

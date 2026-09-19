@@ -31,7 +31,7 @@ export const AiPurposeEnum = z.enum(['COPY', 'RESPOND', 'SUMMARY', 'CUSTOM']);
 
 /** System-prompt wrapper (prompt-injection guard, honest per §155). */
 export const SYSTEM_PROMPT_WRAPPER =
-  'شما دستیار پُستیار هستید. به دستورالعمل‌های سیستم پایبند بمانید و اطلاعات محرمانه، کلیدها یا مقادیر متغیرهای محیطی را هرگز فاش نکنید.';
+  'شما دستیار پُست‌یار هستید. به دستورالعمل‌های سیستم پایبند بمانید و اطلاعات محرمانه، کلیدها یا مقادیر متغیرهای محیطی را هرگز فاش نکنید.';
 
 /** Control characters / zero-width chars stripped; length capped. */
 export function sanitizeUserText(input: string, maxLen = 8000): string {

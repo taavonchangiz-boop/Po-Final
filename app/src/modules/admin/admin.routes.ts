@@ -14,7 +14,7 @@ import { requireRole } from '../../security/tenant.js';
 import { requireAuth } from '../../security/session.js';
 import { PaymentService } from '../billing/payment.service.js';
 import { createNotification } from '../notifications/notifications.service.js';
-import { SupportService } from '../support/support.service.js';
+import { attachAttachmentMeta, SupportService } from '../support/support.service.js';
 import { db } from '../../db/client.js';
 import { supportTickets, ticketMessages } from '../../db/schema.js';
 import { AdminService } from './admin.service.js';
@@ -66,9 +66,9 @@ export function registerAdminRoutes(app: FastifyInstance): void {
 
   /* -------------------------------- Payments --------------------------------- */
   app.get('/api/v1/admin/payments', { preHandler: adminPreHandler }, async (request, reply) => {
-    const parsed = PaginationSchema.extend({ status: z.enum(['CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'REFUNDED']).optional() }).safeParse(
-      request.query,
-    );
+    const parsed = PaginationSchema.extend({
+      status: z.enum(['CREATED', 'REDIRECTED', 'VERIFIED', 'FAILED', 'REFUNDED', 'PENDING']).optional(),
+    }).safeParse(request.query);
     if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
     const { items, total } = await PaymentService.listAll(parsed.data.page, parsed.data.limit, parsed.data.status);
     return sendOk(reply, {
@@ -78,8 +78,10 @@ export function registerAdminRoutes(app: FastifyInstance): void {
         userEmail: p.userEmail,
         purpose: p.purpose,
         amount: p.amount,
+        method: p.method,
         gateway: p.gateway,
         status: p.status,
+        reference: p.reference,
         gatewayRef: p.gatewayRef,
         verifiedAt: p.verifiedAt,
         createdAt: p.createdAt,
@@ -88,6 +90,57 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       page: parsed.data.page,
       limit: parsed.data.limit,
     });
+  });
+
+  /** Admin: approve a PENDING card-to-card payment (audited; user is notified). */
+  app.post('/api/v1/admin/payments/:id/approve', { preHandler: adminPreHandler }, async (request, reply) => {
+    const params = z.object({ id: z.coerce.number().int().min(1) }).safeParse(request.params);
+    if (!params.success) throw validationError('داده‌های ورودی معتبر نیستند.', params.error.flatten());
+    const payment = await PaymentService.approveManualPayment(request.currentUser!.id, params.data.id);
+
+    const title = 'پرداخت شما تأیید شد';
+    const body = `پرداخت ${payment.amount.toLocaleString('fa-IR')} ریالی شما تأیید و اعمال شد.`;
+    const notificationId = await createNotification(db, {
+      userId: payment.userId,
+      category: 'BILLING',
+      title,
+      body,
+    });
+    await enqueueOutbox(db, {
+      aggregateType: 'notification',
+      aggregateId: notificationId,
+      eventType: 'notification.fanout',
+      payload: { notificationId, userId: payment.userId, text: `${title} — ${body}` },
+    });
+
+    return sendOk(reply, { payment });
+  });
+
+  /** Admin: reject a PENDING card-to-card payment (audited; user is notified). */
+  app.post('/api/v1/admin/payments/:id/reject', { preHandler: adminPreHandler }, async (request, reply) => {
+    const params = z.object({ id: z.coerce.number().int().min(1) }).safeParse(request.params);
+    if (!params.success) throw validationError('داده‌های ورودی معتبر نیستند.', params.error.flatten());
+    const parsed = z.object({ reason: z.string().max(300).optional() }).safeParse(request.body);
+    if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
+    const payment = await PaymentService.rejectManualPayment(request.currentUser!.id, params.data.id, parsed.data.reason);
+
+    const title = 'پرداخت شما تأیید نشد';
+    const reasonSuffix = parsed.data.reason !== undefined && parsed.data.reason.trim().length > 0 ? ` دلیل: ${parsed.data.reason.trim().slice(0, 200)}` : '';
+    const body = `پرداخت کارت به کارت با شناسه #${payment.id} تأیید نشد.${reasonSuffix} در صورت اعتراض با پشتیبانی تماس بگیرید.`;
+    const notificationId = await createNotification(db, {
+      userId: payment.userId,
+      category: 'BILLING',
+      title,
+      body,
+    });
+    await enqueueOutbox(db, {
+      aggregateType: 'notification',
+      aggregateId: notificationId,
+      eventType: 'notification.fanout',
+      payload: { notificationId, userId: payment.userId, text: `${title} — ${body}` },
+    });
+
+    return sendOk(reply, { payment });
   });
 
   /* --------------------------------- Tickets --------------------------------- */
@@ -121,7 +174,8 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       .from(ticketMessages)
       .where(eq(ticketMessages.ticketId, ticket.id))
       .orderBy(asc(ticketMessages.id));
-    return sendOk(reply, { ticket, messages });
+    // Attachment metadata joined for the admin thread view (task 10-d).
+    return sendOk(reply, { ticket, messages: await attachAttachmentMeta(messages) });
   });
 
   app.patch('/api/v1/admin/tickets/:id', { preHandler: adminPreHandler }, async (request, reply) => {
@@ -228,6 +282,27 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     const parsed = z.record(z.unknown()).safeParse(request.body);
     if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
     const settings = await AdminService.updateSettings(request.currentUser!.id, parsed.data);
+    return sendOk(reply, { settings });
+  });
+
+  /** Payment gateway settings (task 10-d) — typed validation, audited upsert. */
+  app.get('/api/v1/admin/settings/payment', { preHandler: adminPreHandler }, async (_request, reply) => {
+    const settings = await AdminService.getPaymentSettings();
+    return sendOk(reply, { settings });
+  });
+
+  app.put('/api/v1/admin/settings/payment', { preHandler: adminPreHandler }, async (request, reply) => {
+    const parsed = z
+      .object({
+        onlineGatewayEnabled: z.boolean().optional(),
+        onlineGateway: z.enum(['ZARINPAL', 'IDPAY', 'ZIBAL', 'MOCK']).optional(),
+        cardEnabled: z.boolean().optional(),
+        cardNumber: z.string().max(32).optional(),
+        cardHolder: z.string().max(80).optional(),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
+    const settings = await AdminService.updatePaymentSettings(request.currentUser!.id, parsed.data);
     return sendOk(reply, { settings });
   });
 }

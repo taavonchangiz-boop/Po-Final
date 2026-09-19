@@ -1,6 +1,6 @@
 # Postyar — Security Model — v1.0.0
 
-مدل امنیتی پُستیار، پاسخ مستقیم به یافته‌های فرانشکافی کد مرجع است (`audits/asovin/AUDIT.md`، `audits/woo-hooman-channel-manager/AUDIT.md`) و فهرست الزامات master prompt §38 را کامل پوشش می‌دهد. هر تهدید ← mitigation ← محل پیاده‌سازی.
+مدل امنیتی پُست‌یار، پاسخ مستقیم به یافته‌های فرانشکافی کد مرجع است (`audits/asovin/AUDIT.md`، `audits/woo-hooman-channel-manager/AUDIT.md`) و فهرست الزامات master prompt §38 را کامل پوشش می‌دهد. هر تهدید ← mitigation ← محل پیاده‌سازی.
 
 ## 1. Threat model (master prompt §38) — تهدید، راهکار، محل
 

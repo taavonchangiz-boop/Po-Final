@@ -29,7 +29,7 @@ export function ToastViewport() {
     <div
       aria-live="polite"
       aria-label="پیام‌های سیستم"
-      className="pointer-events-none fixed inset-x-4 bottom-4 z-[60] flex flex-col items-stretch gap-2 sm:inset-x-auto sm:bottom-6 sm:start-6 sm:w-80"
+      className="pointer-events-none fixed inset-x-4 bottom-24 z-[60] flex flex-col items-stretch gap-2 sm:inset-x-auto sm:bottom-6 sm:start-6 sm:w-80"
     >
       {toasts.map((t) => {
         const Icon = ICONS[t.type];

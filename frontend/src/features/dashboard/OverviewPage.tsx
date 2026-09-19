@@ -20,13 +20,16 @@ import { get } from '../../lib/api';
 import { faNumber, faPercent, faDateTime } from '../../lib/format';
 import { errorMessage, ErrorCard } from '../publishing/parts';
 import { eventLabels } from '../analytics/analyticsParts';
+import SubscriptionStatusWidget from './SubscriptionStatusWidget';
 
 /**
- * Overview — GET /analytics/overview KPIs + quick actions + activity timeline.
+ * Overview — GET /analytics/overview KPIs + «وضعیت اشتراک» usage widget +
+ * quick actions + activity timeline.
  * Response shape verified against app/src/modules/analytics/analytics.service.ts:
  *  { postsSent, deliveryFailed, successRate (0..1 | null), botMessages,
  *    aiCredits: { used, quota, month }, activeChannels, unreadNotifications }
  * Timeline rows: { id, type, subjectType, subjectId, data, createdAt }.
+ * Subscription widget: GET /subscription/usage (see SubscriptionStatusWidget).
  */
 
 interface OverviewResponse {
@@ -120,6 +123,9 @@ export default function OverviewPage() {
         }
       />
 
+      {/* «وضعیت اشتراک» — plan, days remaining + usage vs plan limits (item 11) */}
+      <SubscriptionStatusWidget />
+
       {overview.isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 5 }, (_, i) => (
@@ -134,7 +140,7 @@ export default function OverviewPage() {
       ) : firstRun ? (
         <EmptyState
           icon={Send}
-          title="به پُستیار خوش آمدید!"
+          title="به پُست‌یار خوش آمدید!"
           description="با اتصال اولین کانال شروع کنید. سپس پست بسازید و در تلگرام، بله و روبیکا هم‌زمان منتشر کنید."
           action={
             <Link

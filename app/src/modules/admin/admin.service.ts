@@ -6,6 +6,7 @@
 import { and, count, desc, eq, gt, or, sql } from 'drizzle-orm';
 import { conflict, forbidden, notFound, validationError } from '../../core/errors.js';
 import { AnalyticsService } from '../../core/events.js';
+import { env } from '../../config/env.js';
 import { db, withTransaction } from '../../db/client.js';
 import {
   auditLogs,
@@ -39,6 +40,48 @@ const SAFE_USER_COLUMNS = {
 
 export const ADMIN_SETTINGS_WHITELIST = ['referral_reward_amount', 'referral_enabled', 'retention_days'] as const;
 export type AdminSettingKey = (typeof ADMIN_SETTINGS_WHITELIST)[number];
+
+/* ------------------------------ Payment settings ------------------------------ */
+
+/**
+ * Payment gateway settings keys (task 10-d). Kept OUT of the generic settings
+ * whitelist: they have their own typed validation + dedicated admin endpoint
+ * (GET/PUT /admin/settings/payment).
+ */
+export const PAYMENT_SETTINGS_KEYS = {
+  onlineEnabled: 'payment.online_gateway_enabled',
+  onlineGateway: 'payment.online_gateway',
+  cardEnabled: 'payment.card_enabled',
+  cardNumber: 'payment.card_number',
+  cardHolder: 'payment.card_holder',
+} as const;
+
+export interface PaymentSettings {
+  online_gateway_enabled: boolean;
+  online_gateway: 'ZARINPAL' | 'IDPAY' | 'ZIBAL' | 'MOCK' | null;
+  card_enabled: boolean;
+  card_number: string;
+  card_holder: string;
+}
+
+export interface PaymentSettingsPatch {
+  onlineGatewayEnabled?: boolean;
+  onlineGateway?: 'ZARINPAL' | 'IDPAY' | 'ZIBAL' | 'MOCK';
+  cardEnabled?: boolean;
+  cardNumber?: string;
+  cardHolder?: string;
+}
+
+const VALID_GATEWAYS: ReadonlySet<string> = new Set(['ZARINPAL', 'IDPAY', 'ZIBAL', 'MOCK']);
+
+/** Coerce an arbitrary stored JSON value to a boolean (false on mismatch). */
+function boolOf(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function normalizeCardNumber(raw: string): string {
+  return raw.replace(/[\s-]/g, '');
+}
 
 export const AdminService = {
   async platformStats(): Promise<{
@@ -224,5 +267,85 @@ export const AdminService = {
       data: { keys: Object.keys(patch) },
     });
     return AdminService.getSettings();
+  },
+
+  /** Read payment gateway settings with safe defaults (env fallback for the gateway). */
+  async getPaymentSettings(): Promise<PaymentSettings> {
+    const rows = await db.select().from(settings);
+    const byKey = new Map(rows.map((row) => [row.key, row.value]));
+    const storedGateway = byKey.get(PAYMENT_SETTINGS_KEYS.onlineGateway);
+    const gateway =
+      typeof storedGateway === 'string' && VALID_GATEWAYS.has(storedGateway)
+        ? (storedGateway as PaymentSettings['online_gateway'])
+        : (env.PAYMENT_PROVIDER ?? null);
+    const storedNumber = byKey.get(PAYMENT_SETTINGS_KEYS.cardNumber);
+    const storedHolder = byKey.get(PAYMENT_SETTINGS_KEYS.cardHolder);
+    return {
+      online_gateway_enabled: boolOf(
+        byKey.get(PAYMENT_SETTINGS_KEYS.onlineEnabled),
+        env.PAYMENT_PROVIDER !== undefined,
+      ),
+      online_gateway: gateway,
+      card_enabled: boolOf(byKey.get(PAYMENT_SETTINGS_KEYS.cardEnabled), false),
+      card_number: typeof storedNumber === 'string' ? storedNumber : '',
+      card_holder: typeof storedHolder === 'string' ? storedHolder : '',
+    };
+  },
+
+  /** Validate + upsert payment settings (audited). */
+  async updatePaymentSettings(actorUserId: number, patch: PaymentSettingsPatch): Promise<PaymentSettings> {
+    const upserts: Array<{ key: string; value: unknown }> = [];
+
+    if (patch.onlineGatewayEnabled !== undefined) {
+      upserts.push({ key: PAYMENT_SETTINGS_KEYS.onlineEnabled, value: patch.onlineGatewayEnabled });
+    }
+    if (patch.onlineGateway !== undefined) {
+      upserts.push({ key: PAYMENT_SETTINGS_KEYS.onlineGateway, value: patch.onlineGateway });
+    }
+    if (patch.cardEnabled !== undefined) {
+      upserts.push({ key: PAYMENT_SETTINGS_KEYS.cardEnabled, value: patch.cardEnabled });
+    }
+    if (patch.cardNumber !== undefined) {
+      const normalized = normalizeCardNumber(patch.cardNumber);
+      if (normalized.length > 0 && !/^\d{16}$/.test(normalized)) {
+        throw validationError('شماره کارت باید ۱۶ رقم باشد.');
+      }
+      upserts.push({ key: PAYMENT_SETTINGS_KEYS.cardNumber, value: normalized });
+    }
+    if (patch.cardHolder !== undefined) {
+      const holder = patch.cardHolder.trim();
+      if (holder.length > 0 && (holder.length < 3 || holder.length > 60)) {
+        throw validationError('نام صاحب کارت باید بین ۳ تا ۶۰ کاراکتر باشد.');
+      }
+      upserts.push({ key: PAYMENT_SETTINGS_KEYS.cardHolder, value: holder });
+    }
+
+    // Enabling a method requires its details to be present.
+    const current = await AdminService.getPaymentSettings();
+    const cardNumber =
+      patch.cardNumber !== undefined ? normalizeCardNumber(patch.cardNumber) : current.card_number;
+    if (patch.cardEnabled === true && cardNumber.length === 0) {
+      throw validationError('برای فعال‌سازی پرداخت کارت به کارت، ابتدا شماره کارت را وارد کنید.');
+    }
+    const gateway = patch.onlineGateway ?? current.online_gateway;
+    if (patch.onlineGatewayEnabled === true && gateway === null) {
+      throw validationError('برای فعال‌سازی درگاه آنلاین، ابتدا درگاه را انتخاب کنید.');
+    }
+
+    if (upserts.length === 0) throw validationError('تغییری برای اعمال وجود ندارد.');
+    for (const { key, value } of upserts) {
+      await db
+        .insert(settings)
+        .values({ key, value, updatedAt: new Date() })
+        .onDuplicateKeyUpdate({ set: { value, updatedAt: new Date() } });
+    }
+
+    AnalyticsService.trackAudit({
+      actorUserId,
+      action: 'admin.payment_settings.updated',
+      subjectType: 'settings',
+      data: { keys: upserts.map((u) => u.key) },
+    });
+    return AdminService.getPaymentSettings();
   },
 };

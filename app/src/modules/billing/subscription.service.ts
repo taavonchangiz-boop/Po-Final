@@ -2,13 +2,13 @@
  * Subscription service: current plan resolution, plan limits for other modules,
  * plan change (payment-backed) and transactional activation on verified payments.
  */
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { planLimit, notFound, conflict } from '../../core/errors.js';
 import { AnalyticsService } from '../../core/events.js';
 import { faJalaliDateLong } from '../../core/jalali.js';
 import { db, withTransaction, type DbExecutor, type Tx } from '../../db/client.js';
-import { plans, subscriptions, payments } from '../../db/schema.js';
+import { plans, subscriptions, payments, posts, channels, bots } from '../../db/schema.js';
 import { enqueueOutbox } from '../../core/outbox.js';
 import { createNotification } from '../notifications/notifications.service.js';
 
@@ -23,6 +23,23 @@ export type PlanLimits = {
 
 export type PlanRow = typeof plans.$inferSelect;
 export type SubscriptionRow = typeof subscriptions.$inferSelect;
+
+/** Response of GET /subscription/usage (serialized as JSON — Date → ISO). */
+export interface SubscriptionUsageSummary {
+  plan: { id: number; code: string; name: string; priceMonthly: number };
+  subscriptionStatus: SubscriptionRow['status'] | null;
+  expiresAt: Date | null;
+  /** Whole days left on the ACTIVE subscription; null when there is none. */
+  daysRemaining: number | null;
+  usage: {
+    /** Posts created this calendar month (the enforced postsPerMonth gate). */
+    posts: { used: number; limit: number };
+    /** Channels not DISCONNECTED (the enforced channels gate). */
+    channels: { used: number; limit: number };
+    /** All owned bots (the enforced bots gate). */
+    bots: { used: number; limit: number };
+  };
+}
 
 export const PlanLimitsSchema = z.object({
   channels: z.number().int().min(0),
@@ -135,18 +152,70 @@ export const SubscriptionService = {
   },
 
   /**
+   * Usage dashboard for GET /subscription/usage: effective plan + days remaining
+   * + per-resource counters vs plan limits. Each counter mirrors the EXACT query
+   * its enforcing service runs (publishing countPostsThisMonth, channels
+   * countActiveChannels, bots create check) so the UI never shows a different
+   * number than the gate that will reject the next request. Read-only
+   * cross-domain SELECTs (same pattern as auth.getMeSummary) keep the module
+   * graph acyclic.
+   */
+  async getUsageSummary(userId: number): Promise<SubscriptionUsageSummary> {
+    const plan = await SubscriptionService.resolvePlanForUser(userId);
+    const active = await SubscriptionService.getActiveSubscription(userId);
+
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const [postsRows, channelRows, botRows] = await Promise.all([
+      db
+        .select({ value: count() })
+        .from(posts)
+        .where(and(eq(posts.userId, userId), gte(posts.createdAt, monthStart))),
+      db
+        .select({ value: count() })
+        .from(channels)
+        .where(and(eq(channels.userId, userId), ne(channels.status, 'DISCONNECTED'))),
+      db.select({ value: count() }).from(bots).where(eq(bots.userId, userId)),
+    ]);
+
+    const expiresAt = active?.subscription.expiresAt ?? null;
+    const daysRemaining =
+      expiresAt === null ? null : Math.max(0, Math.ceil((expiresAt.getTime() - now.getTime()) / 86_400_000));
+
+    return {
+      plan: { id: plan.id, code: plan.code, name: plan.name, priceMonthly: plan.priceMonthly },
+      subscriptionStatus: active?.subscription.status ?? null,
+      expiresAt,
+      daysRemaining,
+      usage: {
+        posts: { used: Number(postsRows[0]?.value ?? 0), limit: plan.limits.postsPerMonth },
+        channels: { used: Number(channelRows[0]?.value ?? 0), limit: plan.limits.channels },
+        bots: { used: Number(botRows[0]?.value ?? 0), limit: plan.limits.bots },
+      },
+    };
+  },
+
+  /**
    * Change plan: creates a SUBSCRIPTION payment and returns the gateway redirect.
    * A zero-price plan (FREE) is applied immediately without payment.
+   * `renew: true` re-purchases the CURRENT active plan (تمدید) — the same-plan
+   * conflict guard is skipped because the user's intent is explicitly to extend;
+   * activatePlan() then extends from the current expiry so no days are lost.
    */
   async changePlan(
     userId: number,
     planId: number,
+    options: { renew?: boolean } = {},
   ): Promise<{ paymentId: number | null; redirectUrl: string | null; applied: boolean }> {
     const plan = await SubscriptionService.getPlanById(planId);
     if (plan === null || !plan.isActive) throw notFound('پلن مورد نظر یافت نشد.');
 
     const active = await SubscriptionService.getActiveSubscription(userId);
-    if (active && active.plan.id === plan.id && active.subscription.expiresAt.getTime() > Date.now()) {
+    const sameActivePlan =
+      active !== null &&
+      active.plan.id === plan.id &&
+      active.subscription.expiresAt.getTime() > Date.now();
+    if (sameActivePlan && options.renew !== true) {
       throw conflict('شما در حال حاضر همین پلن را دارید.');
     }
 

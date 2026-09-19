@@ -18,18 +18,32 @@ import { faMoney, faDateTime, faNumber, toEn, labelOf } from '../../lib/format';
 import { useUiStore } from '../../store/ui';
 import { usePaged } from '../hooks/usePaged';
 import { errorMessage, ErrorCard } from '../publishing/parts';
-import { walletTypeLabels, walletSignedAmount, openGatewayRedirect } from './billingParts';
+import { walletTypeLabels, walletSignedAmount, openGatewayRedirect, settleMockPayment } from './billingParts';
+import {
+  CardInfoPanel,
+  MethodToggle,
+  ReferenceInput,
+  useCardPayment,
+  usePaymentMethods,
+  validateReference,
+} from './PaymentMethods';
 
 /**
- * Wallet — balance, topup (gateway redirect) and the append-only ledger.
+ * Wallet — balance, topup (online gateway redirect OR card-to-card) and the
+ * append-only ledger.
  * Shapes verified against app/src/modules/billing/billing.routes.ts +
  * wallet.service.ts + payment.service.ts:
  *  - GET /wallet → { balance, currency, entries: [{ id, direction, type, amount,
  *    balanceAfter, description, createdAt }] } (10 most recent entries).
  *  - GET /wallet/entries?page&limit → { items: WalletEntryRow[], total, page, limit }.
+ *  - GET /billing/payment-methods → { online: {enabled, gateway}, card: {enabled,
+ *    number, holder} } (task 10-d) — drives the method toggle in the topup dialog.
  *  - POST /wallet/topup { amount? } → 201 { paymentId, redirectUrl, amount, gateway,
  *    presets } — amount min 100,000 Rial (WALLET_TOPUP_MIN), max 500,000,000.
  *    Presets come from PaymentService: 100k / 500k / 1M / 2M / 5M Rial.
+ *  - POST /payments/card { purpose: 'WALLET_TOPUP', amount, reference } → 201
+ *    { paymentId, amount, status: 'PENDING' } — card-to-card receipt awaiting
+ *    admin approval (task 10-d).
  */
 
 interface WalletEntryRecord {
@@ -75,6 +89,30 @@ export default function WalletPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentResult]);
 
+  // MOCK/dev gateway return: /app/wallet?mock_payment=<id>&authority=… — settle
+  // via the idempotent public callback, then hand off to the ?payment handler.
+  const mockPaymentId = searchParams.get('mock_payment');
+  useEffect(() => {
+    if (!mockPaymentId) return;
+    let cancelled = false;
+    pushToast('info', 'در حال بررسی پرداخت آزمایشی…');
+    settleMockPayment(mockPaymentId, searchParams.get('authority'))
+      .then((redirect) => {
+        if (cancelled) return;
+        window.location.replace(redirect); // same-origin SPA path → ?payment=ok|failed
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        if (e instanceof ApiError && e.status === 401) return;
+        pushToast('error', `تسویه پرداخت آزمایشی ناموفق بود: ${e instanceof Error ? e.message : 'خطای نامشخص'}`);
+        void setSearchParams({}, { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mockPaymentId]);
+
   const wallet = useQuery({
     queryKey: ['wallet'],
     queryFn: () => get<WalletResponse>('/wallet'),
@@ -83,6 +121,25 @@ export default function WalletPage() {
   const [topupOpen, setTopupOpen] = useState(false);
   const [amount, setAmount] = useState('');
   const [amountError, setAmountError] = useState<string | null>(null);
+
+  // Payment methods (task 10-d): online gateway + card-to-card, admin-gated.
+  const methods = usePaymentMethods();
+  const onlineEnabled = methods.data?.online?.enabled === true;
+  const cardEnabled = methods.data?.card?.enabled === true;
+  const [payMethod, setPayMethod] = useState<'ONLINE' | 'CARD'>('ONLINE');
+  // Neither method flagged enabled (e.g. methods query failed) → default to the
+  // ONLINE path so the server's Persian error stays the source of truth.
+  const effectiveMethod: 'ONLINE' | 'CARD' = onlineEnabled ? payMethod : cardEnabled ? 'CARD' : 'ONLINE';
+  const [reference, setReference] = useState('');
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+
+  const cardPayment = useCardPayment(() => {
+    setTopupOpen(false);
+    setAmount('');
+    setReference('');
+    setReferenceError(null);
+    void queryClient.invalidateQueries({ queryKey: ['wallet'] });
+  });
 
   const topupMutation = useMutation({
     mutationFn: (rial: number) =>
@@ -115,6 +172,13 @@ export default function WalletPage() {
     }
     if (rial > TOPUP_MAX) {
       setAmountError('مبلغ واردشده بیش از حد مجاز است.');
+      return;
+    }
+    if (effectiveMethod === 'CARD') {
+      const err = validateReference(reference);
+      setReferenceError(err);
+      if (err !== null) return;
+      cardPayment.mutate({ purpose: 'WALLET_TOPUP', amount: rial, reference: reference.trim() });
       return;
     }
     topupMutation.mutate(rial);
@@ -152,7 +216,7 @@ export default function WalletPage() {
               label="موجودی فعلی"
               value={faMoney(wallet.data?.balance ?? 0)}
               icon={WalletIcon}
-              hint="اعتبار برای خدمات پُستیار (ریال)"
+              hint="اعتبار برای خدمات پُست‌یار (ریال)"
             />
             {/* Latest entries preview lives in the ledger table below; balance card is the KPI. */}
           </div>
@@ -229,9 +293,20 @@ export default function WalletPage() {
         open={topupOpen}
         onClose={() => setTopupOpen(false)}
         title="افزایش اعتبار کیف پول"
-        description="مبلغ شارژ به ریال؛ پس از پرداخت در درگاه، به‌صورت خودکار به موجودی اضافه می‌شود."
+        description="مبلغ شارژ به ریال؛ از درگاه آنلاین یا کارت به کارت."
       >
         <div className="space-y-4">
+          {onlineEnabled && cardEnabled ? (
+            <MethodToggle
+              onlineEnabled={onlineEnabled}
+              cardEnabled={cardEnabled}
+              value={effectiveMethod}
+              onChange={(v) => {
+                setPayMethod(v);
+                setReferenceError(null);
+              }}
+            />
+          ) : null}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {TOPUP_PRESETS.map((preset) => (
               <button
@@ -262,11 +337,28 @@ export default function WalletPage() {
             error={amountError ?? undefined}
             hint={`حداقل ${faMoney(TOPUP_MIN)}`}
           />
+          {effectiveMethod === 'CARD' ? (
+            <div className="space-y-3">
+              {cardEnabled && typeof methods.data?.card?.number === 'string' ? (
+                <CardInfoPanel number={methods.data.card.number} holder={methods.data.card?.holder} />
+              ) : (
+                <Skeleton className="h-16 w-full" />
+              )}
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                مبلغ انتخابی را به همین کارت واریز کنید و شماره پیگیری تراکنش را وارد نمایید. پس از تأیید مدیر، مبلغ به کیف پول شما اضافه می‌شود.
+              </p>
+              <ReferenceInput value={reference} onChange={setReference} error={referenceError} />
+            </div>
+          ) : null}
           <div className="flex items-center gap-2 pt-1">
-            <Button loading={topupMutation.isPending} onClick={submitTopup}>
-              پرداخت و انتقال به درگاه
+            <Button loading={topupMutation.isPending || cardPayment.isPending} onClick={submitTopup}>
+              {effectiveMethod === 'CARD' ? 'ثبت رسید پرداخت' : 'پرداخت و انتقال به درگاه'}
             </Button>
-            <Button variant="ghost" onClick={() => setTopupOpen(false)} disabled={topupMutation.isPending}>
+            <Button
+              variant="ghost"
+              onClick={() => setTopupOpen(false)}
+              disabled={topupMutation.isPending || cardPayment.isPending}
+            >
               انصراف
             </Button>
           </div>

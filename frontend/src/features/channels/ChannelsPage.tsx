@@ -341,7 +341,7 @@ export default function ChannelsPage() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         title="افزودن کانال"
-        description="کانال باید توسط رباتِ پُستیار به‌عنوان مدیر اضافه شده باشد."
+        description="کانال باید توسط رباتِ پُست‌یار به‌عنوان مدیر اضافه شده باشد."
       >
         <form
           className="space-y-4"

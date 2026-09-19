@@ -55,6 +55,60 @@
 
   /* Radius conventions */
   --radius-card: 0.875rem;
+
+  /* ---------- Shell motion (floating glass header, mobile navbar, «سایر» bottom sheet) ---------- */
+  --animate-fade-in: fade-in 180ms ease-out both;
+  --animate-fade-out: fade-out 160ms ease-in both;
+  --animate-sheet-in: sheet-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-sheet-out: sheet-out 210ms cubic-bezier(0.4, 0, 1, 1) both;
+  --animate-item-in: item-in 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      opacity: 0;
+      transform: translateY(24px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes sheet-out {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(24px) scale(0.97);
+    }
+  }
+  @keyframes item-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
 }
 
 /* Semantic CSS variables (runtime-referencable) */
@@ -175,4 +229,120 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Landing page (task 10-b) — motion & effect utilities (lp-*, distinct    */
+/* from shell tokens above; all covered by the reduced-motion override)    */
+/* ---------------------------------------------------------------------- */
+
+/* Reveal-on-scroll: .lp-reveal-visible is added by IntersectionObserver */
+.lp-reveal {
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 700ms ease,
+    transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+.lp-reveal-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes lp-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+@keyframes lp-float-alt {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(10px);
+  }
+}
+@keyframes lp-aurora {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(3rem, -2rem, 0) scale(1.12);
+  }
+  66% {
+    transform: translate3d(-2.5rem, 1.5rem, 0) scale(0.94);
+  }
+}
+@keyframes lp-spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes lp-shine {
+  0% {
+    background-position: 200% 50%;
+  }
+  100% {
+    background-position: -200% 50%;
+  }
+}
+@keyframes lp-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.72);
+  }
+}
+
+.lp-float {
+  animation: lp-float 7s ease-in-out infinite;
+}
+.lp-float-alt {
+  animation: lp-float-alt 8.5s ease-in-out infinite;
+}
+.lp-aurora {
+  animation: lp-aurora 18s ease-in-out infinite;
+}
+.lp-spin-slow {
+  animation: lp-spin-slow 26s linear infinite;
+}
+.lp-pulse-dot {
+  animation: lp-pulse-dot 2.2s ease-in-out infinite;
+}
+
+/* Animated shimmer sweep (gradient buttons) */
+.lp-shine {
+  background-size: 200% auto;
+  animation: lp-shine 6s linear infinite;
+}
+
+/* Hover-tilt wrapper (JS sets transform; transition smooths enter/leave) */
+.lp-tilt {
+  transition: transform 250ms ease-out;
+  will-change: transform;
+}
+
+/* Accordion (grid-rows trick, height-animated without JS measurements) */
+.lp-acc {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.lp-acc[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+.lp-acc > div {
+  overflow: hidden;
 }

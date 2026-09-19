@@ -1,5 +1,5 @@
 /**
- * Passenger configuration — Postyar API (پُستیار)
+ * Passenger configuration — Postyar API (پُست‌یار)
  * ---------------------------------------------------------------
  * This file lives at the app root (`postelrobbal/app/Passengerfile.js`
  * in the deployed layout). Passenger reads it automatically when the

@@ -156,7 +156,7 @@ export function AuthModalHost() {
     <Dialog
       open={authModalOpen}
       onClose={closeAuthModal}
-      title="ورود به پُستیار"
+      title="ورود به پُست‌یار"
       description="برای مدیریت انتشار محتوا وارد حساب خود شوید یا ثبت‌نام کنید."
       size="md"
     >
@@ -315,7 +315,7 @@ export function AuthModalHost() {
                 aria-describedby={fieldErrors.acceptTerms ? 'accept-terms-error' : undefined}
               />
               <span>
-                <span className="font-medium">قوانین و مقررات پُستیار</span> را می‌پذیرم.
+                <span className="font-medium">قوانین و مقررات پُست‌یار</span> را می‌پذیرم.
               </span>
             </label>
             {fieldErrors.acceptTerms && (

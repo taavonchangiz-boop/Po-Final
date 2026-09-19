@@ -70,9 +70,9 @@ class Postyar_Admin {
                                 'lastPingTs'  => isset( $last_ping['time'] ) ? (int) $last_ping['time'] : 0,
                                 'i18n'        => array(
                                         'testing'    => 'در حال بررسی اتصال…',
-                                        'ok'         => 'اتصال با پُستیار برقرار است.',
-                                        'failed'     => 'اتصال با پُستیار برقرار نشد.',
-                                        'incomplete' => 'ابتدا نشانی پُستیار، شناسهٔ سایت و کلید مخفی را ذخیره کنید.',
+                                        'ok'         => 'اتصال با پُست‌یار برقرار است.',
+                                        'failed'     => 'اتصال با پُست‌یار برقرار نشد.',
+                                        'incomplete' => 'ابتدا نشانی پُست‌یار، شناسهٔ سایت و کلید مخفی را ذخیره کنید.',
                                         'noPermission' => 'دسترسی لازم را ندارید.',
                                 ),
                         )
@@ -100,7 +100,7 @@ class Postyar_Admin {
 
                 if ( $paired && $api_url_set && $recent && $last_ok ) {
                         $state_class = 'postyar-status--ok';
-                        $state_text  = 'اتصال با پُستیار برقرار است.';
+                        $state_text  = 'اتصال با پُست‌یار برقرار است.';
                 } elseif ( $recent && ! $last_ok ) {
                         $state_class = 'postyar-status--error';
                         $state_text  = 'آخرین تلاش اتصال ناموفق بوده است.';
@@ -150,7 +150,7 @@ class Postyar_Admin {
 
                 if ( '' === $settings['postyar_api_url'] || '' === $settings['postyar_site_public_id'] || '' === Postyar_Settings::get_secret() ) {
                         wp_send_json_error(
-                                array( 'message' => 'تنظیمات اتصال کامل نیست. نشانی پُستیار، شناسهٔ سایت و کلید مخفی را ذخیره کنید.' ),
+                                array( 'message' => 'تنظیمات اتصال کامل نیست. نشانی پُست‌یار، شناسهٔ سایت و کلید مخفی را ذخیره کنید.' ),
                                 400
                         );
                 }

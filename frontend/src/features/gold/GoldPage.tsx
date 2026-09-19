@@ -52,7 +52,7 @@ const FREQUENCY_LABELS: Record<GoldFrequency, string> = {
   WEEKLY: 'هفتگی',
 };
 
-const DEFAULT_TEMPLATE = '🪙 نرخ طلای امروز\n{assets_table}\n📅 {date}\nارسال‌شده از پُستیار';
+const DEFAULT_TEMPLATE = '🪙 نرخ طلای امروز\n{assets_table}\n📅 {date}\nارسال‌شده از پُست‌یار';
 
 interface GoldPricePoint {
   asset?: GoldAsset | string;

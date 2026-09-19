@@ -118,8 +118,8 @@ function PairingDialog({
         <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
           <p className="text-sm font-semibold text-neutral-900">راهنمای اتصال افزونه</p>
           <ol className="mt-2 list-decimal space-y-1.5 pe-4 text-sm leading-6 text-neutral-600">
-            <li>افزونهٔ «پُستیار کانکتور» (Postyar Connector) را در وردپرس نصب و فعال کنید.</li>
-            <li>در تنظیمات افزونه، نشانی پنل پُستیار، شناسهٔ عمومی و کلید امضای بالا را وارد کنید.</li>
+            <li>افزونهٔ «پُست‌یار کانکتور» (Postyar Connector) را در وردپرس نصب و فعال کنید.</li>
+            <li>در تنظیمات افزونه، نشانی پنل پُست‌یار، شناسهٔ عمومی و کلید امضای بالا را وارد کنید.</li>
             <li>تنظیمات را ذخیره کنید تا آزمون اتصال انجام شود؛ وضعیت سایت به «متصل» تغییر می‌کند.</li>
           </ol>
         </div>
@@ -296,7 +296,7 @@ export default function WooPage() {
           <EmptyState
             icon={ShoppingBag}
             title="هنوز سایتی متصل نکرده‌اید"
-            description="با افزودن سایت و نصب افزونهٔ پُستیار کانکتور، محصولات ووکامرس به‌صورت خودکار دریافت می‌شوند."
+            description="با افزودن سایت و نصب افزونهٔ پُست‌یار کانکتور، محصولات ووکامرس به‌صورت خودکار دریافت می‌شوند."
             action={
               <Button onClick={() => setAddOpen(true)}>
                 <ShoppingBag aria-hidden="true" className="size-4" />

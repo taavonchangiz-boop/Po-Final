@@ -8,7 +8,7 @@
  *   🪙 نرخ طلای امروز
  *   {assets_table}
  *   📅 {date}
- *   ارسال‌شده از پُستیار
+ *   ارسال‌شده از پُست‌یار
  *
  * CHANGE DETECTION POLICY (binding for callers):
  *  - The latest snapshot is compared against config.lastPriceSnapshot.
@@ -49,7 +49,7 @@ const ASSET_LABELS: Record<GoldAsset, string> = {
   EUR: 'یورو',
 };
 
-export const DEFAULT_GOLD_TEMPLATE = '🪙 نرخ طلای امروز\n{assets_table}\n📅 {date}\nارسال‌شده از پُستیار';
+export const DEFAULT_GOLD_TEMPLATE = '🪙 نرخ طلای امروز\n{assets_table}\n📅 {date}\nارسال‌شده از پُست‌یار';
 
 /* ------------------------------ price queries ----------------------------- */
 

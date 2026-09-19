@@ -25,17 +25,22 @@ import { SubscriptionService } from '../billing/subscription.service.js';
 export type MediaRow = typeof media.$inferSelect;
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+/** Ticket/support attachments cap (task 10-d). */
+export const TICKET_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 
 const ALLOWED_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+/** Ticket attachments: images + PDF (same storage pipeline, wider allowlist). */
+const ALLOWED_ATTACHMENT_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf']);
 const MIME_BY_EXT: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
   webp: 'image/webp',
   gif: 'image/gif',
+  pdf: 'application/pdf',
 };
 
-function sniffMagic(buf: Buffer): 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' | null {
+function sniffMagic(buf: Buffer): 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' | 'application/pdf' | null {
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
   if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
   if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return 'image/gif';
@@ -46,6 +51,8 @@ function sniffMagic(buf: Buffer): 'image/jpeg' | 'image/png' | 'image/gif' | 'im
   ) {
     return 'image/webp';
   }
+  // PDF magic: "%PDF-" (files < 5 bytes are junk anyway).
+  if (buf.length >= 5 && buf.subarray(0, 5).toString('ascii') === '%PDF-') return 'application/pdf';
   return null;
 }
 
@@ -107,14 +114,30 @@ export const MediaService = {
 
   async save(
     userId: number,
-    input: { filename: string; declaredMime: string; buffer: Buffer; visibility: 'PRIVATE' | 'PUBLIC' },
+    input: {
+      filename: string;
+      declaredMime: string;
+      buffer: Buffer;
+      visibility: 'PRIVATE' | 'PUBLIC';
+      /** Extended allowlist (ticket attachments also accept PDF). */
+      allowedMimes?: ReadonlySet<string>;
+      /** Size cap override; defaults to MAX_FILE_BYTES. */
+      maxBytes?: number;
+      /** Persian size/mime errors for the narrower/wider policy. */
+      sizeErrorMessage?: string;
+      mimeErrorMessage?: string;
+    },
   ): Promise<MediaRow> {
+    const maxBytes = input.maxBytes ?? MAX_FILE_BYTES;
+    const allowedMimes = input.allowedMimes ?? ALLOWED_MIMES;
     if (input.buffer.length === 0) throw validationError('فایل خالی است.');
-    if (input.buffer.length > MAX_FILE_BYTES) throw validationError('حجم فایل بیش از ۱۰ مگابایت است.');
+    if (input.buffer.length > maxBytes) {
+      throw validationError(input.sizeErrorMessage ?? 'حجم فایل بیش از ۱۰ مگابایت است.');
+    }
 
     const sniffed = sniffMagic(input.buffer);
-    if (sniffed === null || !ALLOWED_MIMES.has(sniffed)) {
-      throw validationError('فقط تصاویر JPEG، PNG، WebP و GIF پذیرفته می‌شوند.');
+    if (sniffed === null || !allowedMimes.has(sniffed)) {
+      throw validationError(input.mimeErrorMessage ?? 'فقط تصاویر JPEG، PNG، WebP و GIF پذیرفته می‌شوند.');
     }
 
     const plan = await SubscriptionService.resolvePlanForUser(userId);
@@ -166,6 +189,26 @@ export const MediaService = {
     const row = rows[0];
     if (!row) throw new Error('media_missing');
     return row;
+  },
+
+  /**
+   * Ticket/support attachment (task 10-d): image or PDF, ≤5MB, always PRIVATE,
+   * same storage pipeline + plan storage quota as regular uploads.
+   */
+  async saveTicketAttachment(
+    userId: number,
+    input: { filename: string; declaredMime: string; buffer: Buffer },
+  ): Promise<MediaRow> {
+    return MediaService.save(userId, {
+      filename: input.filename,
+      declaredMime: input.declaredMime,
+      buffer: input.buffer,
+      visibility: 'PRIVATE',
+      allowedMimes: ALLOWED_ATTACHMENT_MIMES,
+      maxBytes: TICKET_ATTACHMENT_MAX_BYTES,
+      sizeErrorMessage: 'حجم فایل پیوست بیش از ۵ مگابایت است.',
+      mimeErrorMessage: 'فقط تصاویر JPEG، PNG، WebP، GIF و فایل‌های PDF به‌عنوان پیوست پذیرفته می‌شوند.',
+    });
   },
 
   async list(userId: number, page: number, limit: number): Promise<{ items: MediaRow[]; total: number }> {

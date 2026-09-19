@@ -116,10 +116,13 @@ Cursor lists accept `cursor` (event/delivery id), `limit` → `{ items, nextCurs
 |---|---|---|
 | GET | /plans | Public plan list (Persian names, limits, prices). |
 | GET | /subscription | Current subscription + plan + limits. |
-| POST | /subscription/change | `{planId}` → creates payment (SUBSCRIPTION purpose) → gateway redirect URL. |
-| POST | /payments | `{purpose, planId?, amount?}` create payment → `{redirectUrl}`. |
-| GET | /payments | History (paginated). |
-| GET | /payments/callback/:gateway?payment_id=..&Authority=.. | Browser return; server-to-server verify; idempotent; wallet/subscription effects transactional; returns redirect path for SPA. |
+| GET | /subscription/usage | Effective plan + days remaining + usage vs plan limits: `{plan, subscriptionStatus, expiresAt, daysRemaining, usage: {posts, channels, bots}}` — each counter mirrors its enforcing gate (posts created this UTC month, channels not DISCONNECTED, all owned bots). |
+| POST | /subscription/change | `{planId, renew?}` → creates payment (SUBSCRIPTION purpose) → gateway redirect URL; `renew: true` re-purchases the CURRENT active plan (skips the same-plan conflict; expiry extends without losing days); zero-price applies instantly; MOCK gateway returns a purpose-aware SPA return path (`/app/subscription?mock_payment=…`). |
+| POST | /payments | `{purpose, planId?, amount?}` create ONLINE payment → `{redirectUrl}`. PAYMENT_ERROR (Persian) when the online gateway is disabled in admin payment settings. |
+| GET | /payments | History (paginated; rows include `method` (ONLINE\|CARD) and `reference` for card payments). |
+| GET | /billing/payment-methods | Available payment methods (auth): `{ online: { enabled, gateway }, card: { enabled, number, holder } }` — driven by admin payment settings; card info present ONLY when card-to-card is enabled. |
+| POST | /payments/card | Card-to-card request `{purpose, planId?, amount?, reference(4..64)}` → 201 `{paymentId, amount, status: 'PENDING'}` — method=CARD, gateway=CARD; awaits admin approval. |
+| GET | /payments/callback/:gateway?payment_id=..&Authority=.. | Browser return; server-to-server verify; idempotent; wallet/subscription effects transactional; returns redirect path for SPA. CARD-method payments are never resolvable via callbacks (404). |
 | GET | /wallet | Balance + recent entries. |
 | GET | /wallet/entries | Ledger (paginated). |
 | POST | /wallet/topup | Create WALLET_TOPUP payment. |
@@ -137,24 +140,31 @@ Cursor lists accept `cursor` (event/delivery id), `limit` → `{ items, nextCurs
 | POST | /media | Multipart upload (image/*, ≤10MB, magic-byte check, WebP convert when applicable). |
 | GET | /media, /media/:id | List / metadata. |
 | GET | /media/:id/content | Authorized streaming (owner or admin only). |
-| GET/POST | /support/tickets | List / create ticket. |
-| GET | /support/tickets/:id | Thread. |
-| POST | /support/tickets/:id/messages | Reply (user or staff). |
+| GET/POST | /support/tickets | List / create ticket. Create accepts JSON **or** `multipart/form-data` with the same fields + ONE optional `attachment` file (image/jpeg\|png\|webp\|gif\|application/pdf, ≤5MB, magic-byte checked; stored PRIVATE via the media pipeline). |
+| GET | /support/tickets/:id | Thread (messages ascending; each message carries `attachment: {id, originalName, mime, size} \| null`). |
+| POST | /support/tickets/:id/messages | Reply — JSON `{body}` or multipart `{body}` + optional `attachment` (same policy). Users may only attach files they uploaded themselves. |
+| GET | /support/attachments/:id | Authorized attachment download/stream: ticket owner or staff only; anyone else gets a uniform 404 (no existence leak). |
 | GET | /admin/stats | Platform KPIs (SUPER_ADMIN/ADMIN only). |
 | GET | /admin/users | Users list (paginated; NEVER password hashes). |
 | PATCH | /admin/users/:id | role/status change (audited, server-checked). |
 | GET | /admin/audit-logs | Audit trail (paginated, filterable). |
-| GET | /admin/payments, /admin/tickets | Operational lists. |
-| GET | /admin/tickets/:id | Admin view of any ticket thread. |
+| GET | /admin/payments | Operational list (rows include `method` and `reference`). |
+| POST | /admin/payments/:id/approve | Approve a PENDING card-to-card payment → applies verified effects exactly once (shared `payment-verify:{id}` idempotency key); audited; user notified. |
+| POST | /admin/payments/:id/reject | Reject a PENDING card-to-card payment `{reason?}` → FAILED + audited; user notified. |
+| GET | /admin/tickets | Ticket list. |
+| GET | /admin/tickets/:id | Admin view of any ticket thread (incl. attachment metadata). |
 | PATCH | /admin/tickets/:id | Ticket status change (audited). |
 | POST | /admin/tickets/:id/reply | Staff reply. |
 | GET/PATCH | /admin/plans, /admin/plans/:id | Plan management. |
 | GET/PATCH | /admin/settings | System settings (referral reward, retention days). |
+| GET/PUT | /admin/settings/payment | Payment settings (ADMIN guarded, audited on save): `{ onlineGatewayEnabled, onlineGateway: ZARINPAL\|IDPAY\|ZIBAL\|MOCK, cardEnabled, cardNumber(16 digits), cardHolder }` → settings keys `payment.online_gateway_enabled`, `payment.online_gateway`, `payment.card_enabled`, `payment.card_number`, `payment.card_holder`. |
 
 ## Behavioral contracts
 - All tenant queries derive ownership from session user; IDs never grant access (IDOR-safe).
 - Plan limits (channels/bots/posts/AI/storage/schedules) enforced in service layer before mutations.
 - Money: BIGINT Rial; wallet mutation = transactional `SELECT ... FOR UPDATE` + ledger insert with `balance_after`.
+- Payments: `method` ONLINE|CARD. ONLINE rows walk the gateway session + callback verify; CARD (card-to-card) rows are created PENDING with the user's transfer reference and settle ONLY via admin approve/reject — approve reuses the verified-effects path with the shared `payment-verify:{id}` idempotency key. When the admin disables the online gateway, ONLINE payment creation fails with a Persian PAYMENT_ERROR pointing to card-to-card.
+- Ticket attachments: image/PDF ≤5MB, magic-byte sniffed (client mime never trusted), stored PRIVATE under the media storage root; downloads only through the ownership-checked support endpoint.
 - Idempotency keys: payment verification, wallet moves, referral rewards, delivery enqueue, expiry notices (`expiry-7d:{subscriptionId}`), WP webhook events, gold publishes.
 - Delivery retries: exponential backoff (60s, 5m, 30m, 2h, 6h), classified errors — permanent/validation/auth errors never retry.
 - 7-day expiry notice: exactly once per subscription (durable unique key), delivered to configured channels + in-app.
