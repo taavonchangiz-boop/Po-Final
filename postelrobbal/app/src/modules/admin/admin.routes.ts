@@ -23,6 +23,8 @@ import {
   putSettings,
   getPaymentState,
   broadcast,
+  getBroadcastTargets,
+  type BroadcastTarget,
   releaseChannel,
   listChannels,
   listBots,
@@ -34,8 +36,14 @@ import {
   adminGetTicket,
   adminAddTicketMessage,
   adminCloseTicket,
-  TICKET_CATEGORIES,
+  adminCreateTicket,
+  getTicketCategories,
+  putTicketCategories,
+  listSupportTeam,
+  createSupporter,
+  setSupporterRole,
 } from '../support/support.service.js';
+import { uploadMedia } from '../media/media.service.js';
 import {
   getPaymentSettings,
   putPaymentSettings,
@@ -98,6 +106,7 @@ const planPatchSchema = z.object({
   isActive: z.boolean().optional(),
   limitsJson: z.record(z.unknown()).optional(),
   featuresJson: z.record(z.unknown()).optional(),
+  pricingJson: z.record(z.unknown()).optional(),
 });
 const planCreateSchema = z.object({
   code: z.string().min(2).max(40).regex(/^[a-z0-9_-]+$/),
@@ -106,6 +115,7 @@ const planCreateSchema = z.object({
   periodDays: z.coerce.number().int().min(1).max(3650).default(30),
   limitsJson: z.record(z.unknown()).optional(),
   featuresJson: z.record(z.unknown()).optional(),
+  pricingJson: z.record(z.unknown()).optional(),
 });
 const settingsSchema = z
   .record(z.unknown())
@@ -158,6 +168,16 @@ const rejectPaymentSchema = z.object({
 const broadcastSchema = z.object({
   titleFa: z.string().min(2).max(190),
   bodyFa: z.string().min(2).max(5000),
+  // Round 19: recipient targeting. Default (absent) = ALL, so the original
+  // single-audience clients keep working.
+  target: z
+    .union([
+      z.object({ kind: z.literal('ALL') }).strict(),
+      z.object({ kind: z.literal('ROLE'), role: z.enum(['USER', 'SUPPORT', 'SUPER_ADMIN']) }).strict(),
+      z.object({ kind: z.literal('PLAN'), planId: z.string().min(1).max(26) }).strict(),
+      z.object({ kind: z.literal('USERS'), userIds: z.array(z.string().min(1).max(26)).min(1).max(500) }).strict(),
+    ])
+    .optional(),
 });
 const releaseSchema = z.object({
   platform: z.enum(['telegram', 'bale', 'rubika']),
@@ -298,6 +318,82 @@ const adminTicketsQuerySchema = z
 const adminTicketReplySchema = z
   .object({ body: z.string().min(1).max(5000) })
   .strict();
+const adminTicketCreateSchema = z
+  .object({
+    tenantId: z.string().min(1).max(26),
+    subject: z.string().min(3).max(190),
+    category: z.string().min(1).max(80).optional(),
+    body: z.string().min(1).max(5000),
+  })
+  .strict();
+const categoriesPutSchema = z
+  .object({ categories: z.array(z.object({ key: z.string(), labelFa: z.string() }).strict()).min(1).max(20) })
+  .strict();
+const supporterCreateSchema = z
+  .object({
+    firstName: z.string().min(2).max(80),
+    lastName: z.string().min(2).max(80),
+    email: z.string().min(3).max(190),
+    mobile: z.string().min(4).max(20),
+    password: z.string().min(8).max(128),
+  })
+  .strict();
+const supporterRoleSchema = z
+  .object({ role: z.enum(['SUPPORT', 'USER']) })
+  .strict();
+
+/**
+ * Round 19 — shared multipart parser for the two admin ticket-writing routes:
+ * text fields + one optional "file" (image/*|pdf ≤10MB, magic-byte re-checked
+ * by uploadMedia). JSON bodies stay accepted for API-only callers.
+ */
+const ADMIN_TICKET_ATTACHMENT_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf']);
+const ADMIN_TICKET_ATTACHMENT_MAX = 10 * 1024 * 1024;
+
+async function parseTicketWriteBody(
+  req: FastifyRequest
+): Promise<{ fields: Record<string, string>; file?: { buffer: Buffer; mime: string; fileName: string } }> {
+  const fields: Record<string, string> = {};
+  let file: { buffer: Buffer; mime: string; fileName: string } | undefined;
+  if (req.isMultipart()) {
+    for await (const part of req.parts()) {
+      if (part.type === 'file') {
+        if (file) continue; // one attachment per message — defensive
+        const mime = part.mimetype.toLowerCase();
+        if (!ADMIN_TICKET_ATTACHMENT_MIME.has(mime)) {
+          throw new AppError(ERR.VALIDATION('فرمت فایل مجاز نیست. تصویر (JPG، PNG، WebP، GIF) یا PDF ارسال کنید.'));
+        }
+        let buffer: Buffer;
+        try {
+          buffer = await part.toBuffer();
+        } catch {
+          throw new AppError(ERR.VALIDATION('حجم فایل بیش از حد مجاز است.'));
+        }
+        const fileName = (part.filename ?? 'file').trim().slice(0, 255) || 'file';
+        file = { buffer, mime, fileName };
+      } else if (part.type === 'field' && typeof part.value === 'string') {
+        fields[part.fieldname] = part.value;
+      }
+    }
+  } else if (req.body && typeof req.body === 'object') {
+    for (const [k, v] of Object.entries(req.body as Record<string, unknown>)) {
+      if (typeof v === 'string') fields[k] = v;
+    }
+  }
+  return { fields, file };
+}
+
+async function uploadTicketAttachment(
+  tenantId: string,
+  file: { buffer: Buffer; mime: string; fileName: string }
+): Promise<{ mediaId: string; fileName: string; sizeBytes: number; mime: string }> {
+  const uploaded = await uploadMedia(tenantId, {
+    buffer: file.buffer,
+    mimeType: file.mime,
+    maxBytes: ADMIN_TICKET_ATTACHMENT_MAX,
+  });
+  return { mediaId: uploaded.id, fileName: file.fileName, sizeBytes: uploaded.sizeBytes, mime: uploaded.mime };
+}
 
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   // Every admin route requires admin.access; sensitive groups declare a finer permission.
@@ -356,7 +452,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { success: true, data };
   });
 
-  // ---- admin support tickets (round 18) ----
+  // ---- admin support tickets (round 18; extended round 19) ----
   app.get('/admin/support/tickets', access, async (req) => {
     const input = parse(adminTicketsQuerySchema, req.query ?? {});
     const data = await adminListTickets({
@@ -365,7 +461,28 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       page: input.page ?? 1,
       pageSize: input.pageSize ?? 20,
     });
-    return { success: true, data: { ...data, categories: TICKET_CATEGORIES } };
+    return { success: true, data: { ...data, categories: await getTicketCategories() } };
+  });
+
+  // Round 19: staff-initiated ticket for a specific user (تیکت از سمت مدیر).
+  app.post('/admin/support/tickets', access, async (req) => {
+    const me = auth(req);
+    const { fields, file } = await parseTicketWriteBody(req);
+    const input = parse(adminTicketCreateSchema, {
+      tenantId: fields.tenantId ?? '',
+      subject: fields.subject ?? '',
+      category: fields.category ?? 'GENERAL',
+      body: fields.body ?? '',
+    });
+    const attachment = file ? await uploadTicketAttachment(input.tenantId, file) : undefined;
+    const data = await adminCreateTicket(
+      input.tenantId,
+      { id: me.id, role: me.role as 'SUPER_ADMIN' | 'SUPPORT' },
+      { subject: input.subject, category: input.category ?? 'GENERAL', body: input.body },
+      attachment
+    );
+    await audit({ action: 'admin.ticket_created', actorId: me.id, actorRole: me.role, subjectType: 'ticket', subjectId: data.id, ip: req.ip, meta: { tenantId: input.tenantId } });
+    return { success: true, data };
   });
 
   app.get('/admin/support/tickets/:id', access, async (req) => {
@@ -376,9 +493,18 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.post('/admin/support/tickets/:id/messages', access, async (req) => {
     const me = auth(req);
     const id = paramId(req);
-    const input = parse(adminTicketReplySchema, req.body);
-    await adminAddTicketMessage(id, { id: me.id, role: me.role as 'SUPER_ADMIN' | 'SUPPORT' }, input.body);
-    await audit({ action: 'admin.ticket_reply', actorId: me.id, actorRole: me.role, subjectType: 'ticket', subjectId: id, ip: req.ip });
+    // Round 19: multipart with optional "file" — staff can attach receipts,
+    // screenshots or documents to their reply (parity with the user path).
+    const { fields, file } = await parseTicketWriteBody(req);
+    const input = parse(adminTicketReplySchema, { body: fields.body ?? '' });
+    const attachment = file ? await uploadTicketAttachment(me.id, file) : undefined;
+    await adminAddTicketMessage(
+      id,
+      { id: me.id, role: me.role as 'SUPER_ADMIN' | 'SUPPORT' },
+      input.body,
+      attachment
+    );
+    await audit({ action: 'admin.ticket_reply', actorId: me.id, actorRole: me.role, subjectType: 'ticket', subjectId: id, ip: req.ip, meta: { hasAttachment: Boolean(attachment) } });
     return { success: true, data: { ok: true } };
   });
 
@@ -387,6 +513,43 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const id = paramId(req);
     await adminCloseTicket(id, { id: me.id, role: me.role as 'SUPER_ADMIN' | 'SUPPORT' });
     await audit({ action: 'admin.ticket_close', actorId: me.id, actorRole: me.role, subjectType: 'ticket', subjectId: id, ip: req.ip });
+    return { success: true, data: { ok: true } };
+  });
+
+  // ---- ticket categories manager (round 19) ----
+  app.get('/admin/support/categories', access, async () => {
+    const data = await getTicketCategories();
+    return { success: true, data };
+  });
+
+  app.put('/admin/support/categories', usersManage, async (req) => {
+    const me = auth(req);
+    const input = parse(categoriesPutSchema, req.body);
+    const data = await putTicketCategories(input.categories);
+    await audit({ action: 'admin.ticket_categories_updated', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { count: data.length } });
+    return { success: true, data };
+  });
+
+  // ---- support team (پشتیبان‌ها, round 19) ----
+  app.get('/admin/support/team', access, async () => {
+    const data = await listSupportTeam();
+    return { success: true, data };
+  });
+
+  app.post('/admin/support/team', usersManage, async (req) => {
+    const me = auth(req);
+    const input = parse(supporterCreateSchema, req.body);
+    const data = await createSupporter(input);
+    await audit({ action: 'admin.supporter_created', actorId: me.id, actorRole: me.role, subjectType: 'user', subjectId: data.id, ip: req.ip });
+    return { success: true, data };
+  });
+
+  app.patch('/admin/support/team/:id', usersManage, async (req) => {
+    const me = auth(req);
+    const id = paramId(req);
+    const input = parse(supporterRoleSchema, req.body);
+    await setSupporterRole(id, input.role);
+    await audit({ action: 'admin.supporter_role_changed', actorId: me.id, actorRole: me.role, subjectType: 'user', subjectId: id, ip: req.ip, meta: { role: input.role } });
     return { success: true, data: { ok: true } };
   });
 
@@ -749,11 +912,17 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- broadcast ----
+  app.get('/admin/broadcast/targets', { preHandler: [app.requirePermission('admin.broadcast')] }, async () => {
+    const data = await getBroadcastTargets();
+    return { success: true, data };
+  });
+
   app.post('/admin/broadcast', { preHandler: [app.requirePermission('admin.broadcast')] }, async (req) => {
     const me = auth(req);
     const input = parse(broadcastSchema, req.body);
-    const notified = await broadcast(me.id, input.titleFa, input.bodyFa);
-    await audit({ action: 'admin.broadcast', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { recipients: notified } });
+    const target: BroadcastTarget = input.target ?? { kind: 'ALL' };
+    const notified = await broadcast(me.id, input.titleFa, input.bodyFa, target);
+    await audit({ action: 'admin.broadcast', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { recipients: notified, target } });
     return { success: true, data: { notified } };
   });
 

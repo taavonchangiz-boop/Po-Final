@@ -38,6 +38,7 @@ const AdminChannels = lazy(() => import('./pages/admin/AdminChannels'));
 const AdminBots = lazy(() => import('./pages/admin/AdminBots'));
 const AdminBroadcast = lazy(() => import('./pages/admin/AdminBroadcast'));
 const AdminTickets = lazy(() => import('./pages/admin/AdminTickets'));
+const AdminSupportTeam = lazy(() => import('./pages/admin/AdminSupportTeam'));
 const AdminLogs = lazy(() => import('./pages/admin/AdminLogs'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminSettingsGeneral = lazy(() => import('./pages/admin/AdminSettingsGeneral'));
@@ -94,6 +95,7 @@ export function App() {
           <Route path="bots" element={<AdminBots />} />
           <Route path="broadcast" element={<AdminBroadcast />} />
           <Route path="tickets" element={<AdminTickets />} />
+          <Route path="support-team" element={<AdminSupportTeam />} />
           <Route path="logs" element={<AdminLogs />} />
           <Route path="settings" element={<AdminSettings />} />
           <Route path="settings/general" element={<AdminSettingsGeneral />} />

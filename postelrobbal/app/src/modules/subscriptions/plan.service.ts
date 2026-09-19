@@ -1,4 +1,4 @@
-import { and, count, desc, eq, lt, ne, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, lt, ne, sql } from 'drizzle-orm';
 import { getDb, type Db } from '../../db/client.js';
 import {
   plans,
@@ -9,6 +9,7 @@ import {
   aiUsageMonthly,
   type PlanLimits,
   type PlanFeatures,
+  type PlanPricing,
 } from '../../db/schema.js';
 import { AppError, ERR } from '../../core/errors.js';
 import { newId } from '../../core/ids.js';
@@ -46,6 +47,102 @@ const FREE_FALLBACK_FEATURES: PlanFeatures = {
   woocommerce: false,
   api_access: false,
 };
+
+/** Round 19 defaults — a plan without pricing data behaves exactly like before. */
+export const DEFAULT_PLAN_PRICING: PlanPricing = {
+  renewalDiscountPercent: 0,
+  durationDiscounts: {},
+};
+
+/** Coerces any stored/legacy shape into a valid PlanPricing (never throws). */
+export function normalizePlanPricing(raw: unknown): PlanPricing {
+  const src = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const renewal = Number(src.renewalDiscountPercent);
+  const durationSrc = (src.durationDiscounts && typeof src.durationDiscounts === 'object'
+    ? src.durationDiscounts
+    : {}) as Record<string, unknown>;
+  const durationDiscounts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(durationSrc)) {
+    const months = Number(k);
+    const pct = Number(v);
+    if (Number.isInteger(months) && months >= 1 && months <= 36 && Number.isInteger(pct) && pct >= 0 && pct <= 90) {
+      durationDiscounts[String(months)] = pct;
+    }
+  }
+  return {
+    renewalDiscountPercent:
+      Number.isInteger(renewal) && renewal >= 0 && renewal <= 90 ? renewal : 0,
+    durationDiscounts,
+  };
+}
+
+/**
+ * True when the tenant currently holds an ACTIVE subscription whose expiry is
+ * still in the future. Registration seeds the free plan the same way (30 days,
+ * state ACTIVE), so free-plan users qualify for the renewal/upgrade discount
+ * until their free period ends — exactly the round-19 contract example.
+ */
+export async function hasUnexpiredSubscription(tenantId: string): Promise<boolean> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.tenantId, tenantId),
+        eq(subscriptions.state, 'ACTIVE'),
+        gt(subscriptions.expiresAt, new Date())
+      )
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+export interface SubscriptionPriceBreakdown {
+  listAmountRial: number;
+  durationDiscountPercent: number;
+  renewalDiscountPercent: number;
+  totalDiscountPercent: number;
+  discountAmountRial: number;
+  finalAmountRial: number;
+}
+
+/** Hard cap so stacked discounts can never exceed 90% of the list price. */
+export const MAX_TOTAL_DISCOUNT_PERCENT = 90;
+
+/**
+ * Round 19 pricing engine — single source for every checkout path (online
+ * gateway, card-to-card intent, legacy checkout route).
+ *  - duration discount: plan.durationDiscounts[String(months)] ?? 0;
+ *  - renewal/upgrade discount: plan.renewalDiscountPercent, only when the
+ *    buyer has an unexpired subscription (hasUnexpiredSubscription);
+ *  - the two add up, capped at MAX_TOTAL_DISCOUNT_PERCENT;
+ *  - the discount amount floors (⌊list·pct/100⌋) so the final amount is an
+ *    exact integer rial value.
+ */
+export function computeSubscriptionPrice(
+  plan: { priceRial: number; pricingJson?: unknown },
+  months: number,
+  hasActive: boolean
+): SubscriptionPriceBreakdown {
+  const pricing = normalizePlanPricing(plan.pricingJson);
+  const listAmountRial = Math.max(0, Math.floor(Number(plan.priceRial) || 0)) * Math.max(1, months);
+  const durationDiscountPercent = pricing.durationDiscounts[String(months)] ?? 0;
+  const renewalDiscountPercent = hasActive ? pricing.renewalDiscountPercent : 0;
+  const totalDiscountPercent = Math.min(
+    MAX_TOTAL_DISCOUNT_PERCENT,
+    durationDiscountPercent + renewalDiscountPercent
+  );
+  const discountAmountRial = Math.floor((listAmountRial * totalDiscountPercent) / 100);
+  return {
+    listAmountRial,
+    durationDiscountPercent,
+    renewalDiscountPercent,
+    totalDiscountPercent,
+    discountAmountRial,
+    finalAmountRial: listAmountRial - discountAmountRial,
+  };
+}
 
 function freeContext(free?: { id: string; code: string; nameFa: string; limitsJson: PlanLimits; featuresJson: PlanFeatures; periodDays: number }): PlanContext {
   return {

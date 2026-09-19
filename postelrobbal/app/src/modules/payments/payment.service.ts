@@ -12,7 +12,7 @@ import type { PaymentGatewayAdapter } from '../../providers/payments/zarinpal.js
 import { ZibalAdapter } from '../../providers/payments/zibal.js';
 import { IdpayAdapter } from '../../providers/payments/idpay.js';
 import type { PaymentSettingsSnapshot } from './payment-settings.service.js';
-import { activateSubscriptionTx } from '../subscriptions/plan.service.js';
+import { activateSubscriptionTx, computeSubscriptionPrice, hasUnexpiredSubscription } from '../subscriptions/plan.service.js';
 import type { Tx } from '../subscriptions/plan.service.js';
 import { moveMoneyTx, pointCreditTx } from '../wallet/wallet.service.js';
 import { getPaymentSettings } from './payment-settings.service.js';
@@ -101,6 +101,7 @@ async function createPaymentRow(input: {
   months: number;
   amountRial: number;
   description: string;
+  metaJson?: Record<string, unknown>;
 }): Promise<CreatedPaymentResult> {
   const db = getDb();
   const env = loadEnv();
@@ -121,6 +122,7 @@ async function createPaymentRow(input: {
     gateway: gw.id,
     authority: created.authority,
     state: 'CREATED',
+    metaJson: input.metaJson,
   });
   await emitEvent({
     name: 'payment.created',
@@ -132,7 +134,13 @@ async function createPaymentRow(input: {
   return { paymentId: id, redirectUrl: created.redirectUrl };
 }
 
-/** Subscription purchase payment (plan must be active; free plan has no checkout). */
+/**
+ * Subscription purchase payment (plan must be active; free plan has no checkout).
+ * Round 19: the chargeable amount is the plan's list price × months minus the
+ * applicable discounts (duration discount always; renewal/upgrade discount
+ * when the buyer still has an unexpired subscription). The full breakdown is
+ * persisted in payments.meta_json for the admin payment popup.
+ */
 export async function createSubscriptionPayment(
   tenantId: string,
   planCode: string,
@@ -146,16 +154,17 @@ export async function createSubscriptionPayment(
     .limit(1);
   if (!plan) throw new AppError(ERR.NOT_FOUND('پلن'));
 
-  const amountRial = Number(plan.priceRial) * months;
-  if (amountRial <= 0) throw new AppError(ERR.VALIDATION('این پلن رایگان است.'));
+  const price = computeSubscriptionPrice(plan, months, await hasUnexpiredSubscription(tenantId));
+  if (price.listAmountRial <= 0) throw new AppError(ERR.VALIDATION('این پلن رایگان است.'));
 
   return createPaymentRow({
     tenantId,
     purpose: 'SUBSCRIPTION',
     planId: plan.id,
     months,
-    amountRial,
+    amountRial: price.finalAmountRial,
     description: 'خرید اشتراک پُست‌یار',
+    metaJson: { pricing: price },
   });
 }
 
@@ -201,8 +210,12 @@ export async function createSubscriptionIntent(
   const months = input.months ?? 1;
   const plan = await findActivePlan(input.planId);
   if (!plan) throw new AppError(ERR.NOT_FOUND('پلن'));
-  const amountRial = Number(plan.priceRial) * months;
-  if (amountRial <= 0) throw new AppError(ERR.VALIDATION('این پلن رایگان است و نیازی به پرداخت ندارد.'));
+  // Round 19: server-authoritative discount computation (the client preview is
+  // cosmetic only — the amount charged is always recomputed here).
+  const price = computeSubscriptionPrice(plan, months, await hasUnexpiredSubscription(tenantId));
+  if (price.listAmountRial <= 0) {
+    throw new AppError(ERR.VALIDATION('این پلن رایگان است و نیازی به پرداخت ندارد.'));
+  }
 
   if (input.method === 'online') {
     // Graceful degradation when the gateway is unconfigured (sandbox path).
@@ -223,18 +236,18 @@ export async function createSubscriptionIntent(
     purpose: 'SUBSCRIPTION',
     planId: plan.id,
     months,
-    amountRial,
+    amountRial: price.finalAmountRial,
     gateway: 'card_to_card',
     reference,
     state: 'PENDING_REVIEW',
-    metaJson: { method: 'card_to_card', reference },
+    metaJson: { method: 'card_to_card', reference, pricing: price },
   });
   await emitEvent({
     name: 'payment.created',
     tenantId,
     subjectType: 'payment',
     subjectId: id,
-    props: { purpose: 'SUBSCRIPTION', amountRial, method: 'card_to_card' },
+    props: { purpose: 'SUBSCRIPTION', amountRial: price.finalAmountRial, method: 'card_to_card' },
   });
   return { paymentId: id, reference, cards: settings.cards };
 }

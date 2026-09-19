@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, avatarPhotoUrl } from '../../lib/api';
 import { Badge, Button, EmptyState, Modal, PageLoading, StatusBadge } from '../../components/ui';
 import { Avatar } from '../../components/Avatar';
-import { faDate, faDateTime, faMoney, faNumber } from '../../lib/format';
+import { faDate, faDateTime, faDigits, faMoney, faNumber } from '../../lib/format';
 import { useToast } from '../../lib/toast';
 import { ROLE_FA, USER_STATUS_FA, errText, strField, type AdminUserRow } from './shared';
 
@@ -197,7 +197,10 @@ export function UserProfile360({
           <div className="adm-p360__biz">
             <BizItem label="نام کسب‌وکار" value={strField(p.businessName) || '—'} />
             <BizItem label="حوزه فعالیت" value={strField(p.businessType) || '—'} />
-            <BizItem label="موبایل" value={strField(p.mobile) ? faNumber(strField(p.mobile)) : '—'} ltr />
+            {/* Round 19 fix: mobile is an identifier, not a quantity — digit
+                conversion only (faDigits); faNumber grouped it with thousand
+                separators (۹٬۱۲۰٬۰۰۰٬۰۰۱). */}
+            <BizItem label="موبایل" value={strField(p.mobile) ? faDigits(strField(p.mobile)) : '—'} ltr />
             <BizItem label="کد معرف" value={strField(p.referralCode) || '—'} ltr />
             <BizItem label="آخرین ورود" value={p.lastLoginAt ? faDateTime(p.lastLoginAt) : '—'} />
             <BizItem label="تاریخ عضویت" value={faDate(p.createdAt)} />

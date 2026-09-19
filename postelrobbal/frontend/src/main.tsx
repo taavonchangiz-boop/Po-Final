@@ -29,3 +29,22 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </React.StrictMode>
 );
+
+/**
+ * Register the PWA service worker (production builds only).
+ * Registration must never break the app or log noisy errors: any failure is
+ * swallowed silently, and unsupported browsers (e.g. Safari private mode)
+ * simply skip registration.
+ */
+function registerServiceWorker(): void {
+  if (!('serviceWorker' in navigator)) return;
+  // Vite statically replaces import.meta.env at build time; the cast keeps
+  // strict tsc happy without adding ambient type references.
+  const env = (import.meta as unknown as { env?: { PROD?: boolean } }).env;
+  if (!env || !env.PROD) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+  });
+}
+
+registerServiceWorker();

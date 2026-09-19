@@ -36,6 +36,7 @@ export async function registerSubscriptionRoutes(app: FastifyInstance): Promise<
         periodDays: plans.periodDays,
         limitsJson: plans.limitsJson,
         featuresJson: plans.featuresJson,
+        pricingJson: plans.pricingJson,
         sortOrder: plans.sortOrder,
       })
       .from(plans)

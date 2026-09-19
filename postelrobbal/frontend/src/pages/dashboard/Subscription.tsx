@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiRequestError, type PlanDto } from '../../lib/api';
 import { Button, Card, EmptyState, Field, Modal, PageLoading, Select, StatusBadge } from '../../components/ui';
 import { faDate, faDigits, faFileSize, faMoney, faNumber } from '../../lib/format';
+import { computeCheckoutPreview } from '../../lib/pricing';
 import { useAuth } from '../../lib/auth';
 import { useToast } from '../../lib/toast';
 
@@ -229,6 +230,19 @@ export default function Subscription() {
   const modalCards = (intent?.cards ?? paySettings?.cards ?? []) as CardInfo[];
   const noMethodAvailable = !onlineEnabled && !cardToCardEnabled;
 
+  // Round 19: renewal/upgrade eligibility — an ACTIVE subscription whose expiry
+  // is still in the future (includes the seeded free plan). Server recomputes
+  // authoritatively; this preview mirrors its rules.
+  const hasActiveSub = Boolean(
+    current &&
+      current.state === 'ACTIVE' &&
+      current.expiresAt &&
+      new Date(current.expiresAt).getTime() > Date.now()
+  );
+  const checkoutPreview = payPlan
+    ? computeCheckoutPreview(payPlan.priceRial, payPlan.pricingJson, months, hasActiveSub)
+    : null;
+
   return (
     <div>
       <div style={{ marginBottom: 18 }}>
@@ -244,6 +258,9 @@ export default function Subscription() {
             const isCurrent = currentPlanCode === plan.code;
             const features = plan.featuresJson ?? ({} as PlanDto['featuresJson']);
             const limits = plan.limitsJson ?? ({} as PlanDto['limitsJson']);
+            const durationBadges = Object.entries(plan.pricingJson?.durationDiscounts ?? {})
+              .filter(([, v]) => Number(v) > 0)
+              .sort((a, b) => Number(a[0]) - Number(b[0]));
             return (
               <Card key={plan.id} pad="lg">
                 {isCurrent && (
@@ -254,6 +271,20 @@ export default function Subscription() {
                   {faMoney(plan.priceRial)}
                   <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}> / ماهانه</span>
                 </div>
+
+                {durationBadges.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                    {durationBadges.map(([m, v]) => (
+                      <span
+                        key={m}
+                        className="badge badge-warning"
+                        style={{ fontSize: 11.5 }}
+                      >
+                        🏷️ {faDigits(Number(m))} ماهه: {faDigits(Number(v))}٪ تخفیف
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 <ul style={{ listStyle: 'none', display: 'grid', gap: 5, fontSize: 13, marginBottom: 14, color: 'var(--text-2)' }}>
                   {Object.entries(LIMIT_LABELS_FA).map(([key, label]) => (
@@ -317,7 +348,7 @@ export default function Subscription() {
         onClose={closePayModal}
         title={step === 'done' ? 'پرداخت ثبت شد' : 'تکمیل خرید اشتراک'}
       >
-        {payPlan && step !== 'done' && (
+        {payPlan && step !== 'done' && checkoutPreview && (
           <div
             style={{
               background: 'var(--brand-soft)',
@@ -325,28 +356,56 @@ export default function Subscription() {
               borderRadius: 12,
               padding: '12px 16px',
               marginBottom: 16,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
+              display: 'grid',
+              gap: 6,
             }}
           >
-            <div>
-              <strong style={{ fontSize: 14.5 }}>{payPlan.nameFa}</strong>
-              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{faNumber(payPlan.priceRial / 10)} تومان × {faDigits(months)} ماه</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div>
+                <strong style={{ fontSize: 14.5 }}>{payPlan.nameFa}</strong>
+                <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{faNumber(payPlan.priceRial / 10)} تومان × {faDigits(months)} ماه</div>
+              </div>
+              <strong style={{ fontSize: 17, color: 'var(--brand-strong)' }}>{faMoney(checkoutPreview.final)}</strong>
             </div>
-            <strong style={{ fontSize: 17, color: 'var(--brand-strong)' }}>{faMoney(payPlan.priceRial * months)}</strong>
+            {checkoutPreview.totalPct > 0 && (
+              <div style={{ borderTop: '1px dashed var(--brand)', paddingTop: 6, display: 'grid', gap: 3, fontSize: 12.5 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ color: 'var(--text-2)' }}>قیمت بدون تخفیف</span>
+                  <span style={{ textDecoration: 'line-through' }}>{faMoney(checkoutPreview.list)}</span>
+                </div>
+                {checkoutPreview.durationPct > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--success)' }}>
+                    <span>🏷️ تخفیف خرید {faDigits(months)} ماهه</span>
+                    <span>{faDigits(checkoutPreview.durationPct)}٪</span>
+                  </div>
+                )}
+                {checkoutPreview.renewalPct > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--success)' }}>
+                    <span>🎁 تخفیف تمدید / ارتقا (اشتراک فعال شما)</span>
+                    <span>{faDigits(checkoutPreview.renewalPct)}٪</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontWeight: 700 }}>
+                  <span>سود شما از این خرید</span>
+                  <span>{faMoney(checkoutPreview.discount)}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {step === 'method' && (
           <>
-            <Field label="مدت اشتراک" required hint="مبلغ کل بر اساس مدت انتخابی محاسبه می‌شود.">
+            <Field label="مدت اشتراک" required hint="با انتخاب دوره‌های طولانی‌تر، در صورت تعریف تخفیف دوره‌ای، مبلغ کمتری پرداخت می‌کنید.">
               <Select value={String(months)} onChange={(e) => setMonths(Number(e.target.value))}>
-                {[1, 3, 6, 12].map((m) => (
-                  <option key={m} value={m}>{faDigits(m)} ماه</option>
-                ))}
+                {[1, 3, 6, 12].map((m) => {
+                  const pct = payPlan?.pricingJson?.durationDiscounts?.[String(m)] ?? 0;
+                  return (
+                    <option key={m} value={m}>
+                      {faDigits(m)} ماه{pct > 0 ? ` — ${faDigits(pct)}٪ تخفیف` : ''}
+                    </option>
+                  );
+                })}
               </Select>
             </Field>
 
@@ -434,7 +493,7 @@ export default function Subscription() {
               )}
 
               <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: 0 }}>
-                مبلغ <strong style={{ color: 'var(--text)' }}>{faMoney(payPlan.priceRial * months)}</strong> را واریز کنید، سپس فایل رسید را در همین
+                مبلغ <strong style={{ color: 'var(--text)' }}>{checkoutPreview ? faMoney(checkoutPreview.final) : '—'}</strong> را واریز کنید، سپس فایل رسید را در همین
                 صفحه بارگذاری کنید تا مدیر آن را تأیید کند.
               </p>
             </div>

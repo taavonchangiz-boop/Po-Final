@@ -4,7 +4,6 @@ import { Badge, Button, Card, ConfirmDialog, EmptyState, Field, Input, Modal, Pa
 import { faDigits, faMoney, toLatinDigits } from '../../lib/format';
 import { useToast } from '../../lib/toast';
 import { errText, type AdminPlanDto } from './shared';
-
 /* ------------------------------------------------------------------ */
 /* اشتراک‌ها (پلن‌ها) — full CRUD on subscription plans (Task 16-b).   */
 /* ------------------------------------------------------------------ */
@@ -25,11 +24,22 @@ interface PlanFeatures {
   api_access: boolean;
 }
 
+interface DurationRow {
+  months: string;
+  percent: string;
+}
+
 const EMPTY_FORM = {
   code: '',
   nameFa: '',
   priceRial: '',
   periodDays: '',
+  renewalPercent: '',
+  durationRows: [
+    { months: '3', percent: '' },
+    { months: '6', percent: '' },
+    { months: '12', percent: '' },
+  ] as DurationRow[],
   limits: { max_channels: '', max_posts: '', max_bots: '', max_schedules: '', ai_monthly: '', storage_mb: '' } as Record<keyof PlanLimits, string>,
   features: { gold_ticker: true, auto_responder: true, woocommerce: false, api_access: false } as PlanFeatures,
 };
@@ -95,11 +105,17 @@ export default function AdminPlans() {
 
   const openEdit = (plan: AdminPlanDto) => {
     setEditing(plan);
+    const pricing = plan.pricingJson ?? { renewalDiscountPercent: 0, durationDiscounts: {} };
+    const storedRows = Object.entries(pricing.durationDiscounts ?? {})
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([months, percent]) => ({ months, percent: String(percent) }));
     setForm({
       code: plan.code,
       nameFa: plan.nameFa,
       priceRial: String(plan.priceRial ?? ''),
       periodDays: String(plan.periodDays ?? ''),
+      renewalPercent: pricing.renewalDiscountPercent ? String(pricing.renewalDiscountPercent) : '',
+      durationRows: storedRows.length > 0 ? storedRows : EMPTY_FORM.durationRows.map((r) => ({ ...r })),
       limits: {
         max_channels: String(plan.limitsJson?.max_channels ?? ''),
         max_posts: String(plan.limitsJson?.max_posts ?? ''),
@@ -147,6 +163,38 @@ export default function AdminPlans() {
       limits[key] = n;
     }
 
+    // Round 19: discount model — renewal percent + duration rows.
+    let renewalPercent = 0;
+    if (form.renewalPercent.trim() !== '') {
+      renewalPercent = parseLatin(form.renewalPercent);
+      if (Number.isNaN(renewalPercent) || renewalPercent < 0 || renewalPercent > 90) {
+        toast.error('درصد تخفیف تمدید/ارتقا باید عددی بین ۰ تا ۹۰ باشد.');
+        return;
+      }
+    }
+    const durationDiscounts: Record<string, number> = {};
+    const seenMonths = new Set<number>();
+    for (const row of form.durationRows) {
+      if (row.months.trim() === '' && row.percent.trim() === '') continue; // empty row
+      const months = parseLatin(row.months);
+      const pct = row.percent.trim() === '' ? 0 : parseLatin(row.percent);
+      if (Number.isNaN(months) || months < 1 || months > 36) {
+        toast.error('مدت هر ردیف تخفیف باید عددی بین ۱ تا ۳۶ ماه باشد.');
+        return;
+      }
+      if (Number.isNaN(pct) || pct < 0 || pct > 90) {
+        toast.error(`درصد تخفیف برای «${months} ماه» باید عددی بین ۰ تا ۹۰ باشد.`);
+        return;
+      }
+      if (seenMonths.has(months)) {
+        toast.error(`برای مدت «${months} ماه» بیش از یک ردیف ثبت شده است.`);
+        return;
+      }
+      seenMonths.add(months);
+      durationDiscounts[String(months)] = pct;
+    }
+    const pricingJson = { renewalDiscountPercent: renewalPercent, durationDiscounts };
+
     setSaving(true);
     try {
       if (editing) {
@@ -157,6 +205,7 @@ export default function AdminPlans() {
           isActive: editing.isActive !== false,
           limitsJson: limits,
           featuresJson: form.features,
+          pricingJson,
         });
         toast.success('پلن به‌روزرسانی شد.');
       } else {
@@ -167,6 +216,7 @@ export default function AdminPlans() {
           periodDays: period,
           limitsJson: limits,
           featuresJson: form.features,
+          pricingJson,
         });
         toast.success('پلن جدید ایجاد شد.');
       }
@@ -238,6 +288,7 @@ export default function AdminPlans() {
                   <th>نام</th>
                   <th>قیمت</th>
                   <th>دوره</th>
+                  <th>تخفیف‌ها</th>
                   <th>وضعیت</th>
                   <th></th>
                 </tr>
@@ -249,6 +300,22 @@ export default function AdminPlans() {
                     <td data-label="نام" style={{ fontWeight: 600 }}>{p.nameFa}</td>
                     <td data-label="قیمت" style={{ fontWeight: 700 }}>{faMoney(p.priceRial)}</td>
                     <td data-label="دوره">{faDigits(p.periodDays)} روز</td>
+                    <td data-label="تخفیف‌ها">
+                      {(() => {
+                        const pricing = p.pricingJson;
+                        const rows = Object.entries(pricing?.durationDiscounts ?? {}).filter(([, v]) => Number(v) > 0);
+                        const renewal = Number(pricing?.renewalDiscountPercent ?? 0);
+                        if (rows.length === 0 && renewal === 0) return <span style={{ color: 'var(--text-2)' }}>—</span>;
+                        return (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {renewal > 0 && <Badge tone="warning">تمدید {faDigits(renewal)}٪</Badge>}
+                            {rows.map(([m, v]) => (
+                              <Badge key={m} tone="brand">{faDigits(m)} ماهه {faDigits(Number(v))}٪</Badge>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td data-label="وضعیت">
                       {p.isActive === false ? <Badge tone="muted">غیرفعال</Badge> : <Badge tone="success">فعال</Badge>}
                     </td>
@@ -295,6 +362,75 @@ export default function AdminPlans() {
           <Field label="دوره (روز)" required>
             <Input dir="ltr" style={{ textAlign: 'left' }} inputMode="numeric" value={form.periodDays} onChange={(e) => setForm({ ...form, periodDays: e.target.value })} placeholder="مثلاً 30" />
           </Field>
+        </div>
+
+        <div className="adm-subhead">قیمت‌گذاری و تخفیف‌ها</div>
+        <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: '0 0 10px' }}>
+          تخفیف تمدید/ارتقا فقط وقتی اعمال می‌شود که کاربر هنگام خرید، اشتراک فعال و منقضی‌نشده داشته باشد
+          (تمدید پیش از پایان یا ارتقا — از جمله کاربر رایگانی که پیش از پایان دورهٔ رایگان، پلن پولی می‌خرد).
+          تخفیف مدت خرید برای همهٔ خریدهای همان مدت اعمال می‌شود. مجموع دو تخفیف حداکثر ۹۰٪ است.
+        </p>
+        <div style={{ display: 'grid', gap: 0, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+          <Field label="درصد تخفیف تمدید / ارتقا" hint="۰ تا ۹۰ — خالی یا ۰ یعنی بدون تخفیف تمدید">
+            <Input dir="ltr" style={{ textAlign: 'left' }} inputMode="numeric" value={form.renewalPercent} onChange={(e) => setForm({ ...form, renewalPercent: e.target.value })} placeholder="مثلاً 10" />
+          </Field>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>تخفیف خرید دوره‌ای (ماه ← درصد)</span>
+            <Button
+              size="sm"
+              variant="soft"
+              onClick={() => setForm({ ...form, durationRows: [...form.durationRows, { months: '', percent: '' }] })}
+              disabled={form.durationRows.length >= 12}
+            >
+              + ردیف جدید
+            </Button>
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {form.durationRows.map((row, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Input
+                  dir="ltr"
+                  style={{ textAlign: 'left', width: 130 }}
+                  inputMode="numeric"
+                  value={row.months}
+                  onChange={(e) => {
+                    const rows = [...form.durationRows];
+                    rows[idx] = { ...rows[idx], months: e.target.value };
+                    setForm({ ...form, durationRows: rows });
+                  }}
+                  placeholder="ماه (مثلاً 3)"
+                  aria-label={`مدت ردیف ${idx + 1} به ماه`}
+                />
+                <span aria-hidden="true" style={{ color: 'var(--text-2)' }}>←</span>
+                <Input
+                  dir="ltr"
+                  style={{ textAlign: 'left', width: 130 }}
+                  inputMode="numeric"
+                  value={row.percent}
+                  onChange={(e) => {
+                    const rows = [...form.durationRows];
+                    rows[idx] = { ...rows[idx], percent: e.target.value };
+                    setForm({ ...form, durationRows: rows });
+                  }}
+                  placeholder="درصد (مثلاً 10)"
+                  aria-label={`درصد تخفیف ردیف ${idx + 1}`}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setForm({ ...form, durationRows: form.durationRows.filter((_, i) => i !== idx) })}
+                  aria-label={`حذف ردیف ${idx + 1}`}
+                >
+                  حذف
+                </Button>
+              </div>
+            ))}
+            {form.durationRows.length === 0 && (
+              <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: 0 }}>هیچ ردیفی تعریف نشده — برای خریدهای دوره‌ای تخفیفی اعمال نمی‌شود.</p>
+            )}
+          </div>
         </div>
 
         <div className="adm-subhead">محدودیت‌های پلن</div>

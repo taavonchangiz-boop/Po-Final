@@ -79,6 +79,7 @@ export const api = {
    *  sets the multipart boundary header; never set content-type manually. */
   postForm: <T>(path: string, formData: FormData) => request<T>(path, { method: 'POST', formData }),
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body }),
+  patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
@@ -106,6 +107,11 @@ export function avatarPhotoUrl(userId: string, avatarMediaId?: string | null): s
   return `/api/v1/users/${userId}/avatar${bust}`;
 }
 
+export interface PlanPricing {
+  renewalDiscountPercent: number;
+  durationDiscounts: Record<string, number>;
+}
+
 export interface PlanDto {
   id: string;
   code: string;
@@ -114,6 +120,7 @@ export interface PlanDto {
   periodDays: number;
   limitsJson: { max_channels: number; max_posts: number; max_bots: number; max_schedules: number; ai_monthly: number; storage_mb: number };
   featuresJson: { gold_ticker: boolean; auto_responder: boolean; woocommerce: boolean; api_access: boolean };
+  pricingJson?: PlanPricing;
 }
 
 export interface ChannelDto {

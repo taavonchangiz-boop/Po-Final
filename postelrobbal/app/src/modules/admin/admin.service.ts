@@ -1,4 +1,5 @@
-import { and, count, desc, eq, gte, inArray, ne, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, gte, inArray, ne, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { getDb } from '../../db/client.js';
 import {
   users,
@@ -21,7 +22,7 @@ import {
 } from '../../db/schema.js';
 import { AppError, ERR } from '../../core/errors.js';
 import { newId } from '../../core/ids.js';
-import type { PlanLimits, PlanFeatures } from '../../db/schema.js';
+import type { PlanLimits, PlanFeatures, PlanPricing } from '../../db/schema.js';
 import { notifyTenant } from '../notifications/delivery.js';
 import { activateSubscription, activateSubscriptionTx } from '../subscriptions/plan.service.js';
 import { moveMoneyTx } from '../wallet/wallet.service.js';
@@ -552,6 +553,9 @@ export async function getPaymentState(paymentId: string): Promise<string | null>
   return row?.state ?? null;
 }
 
+/** Alias for the reviewer join (a user row may appear as payer AND reviewer). */
+const reviewer = alias(users, 'reviewer');
+
 export async function listAdminPayments(
   state: string | undefined,
   page: number,
@@ -579,6 +583,7 @@ export async function listAdminPayments(
       reference: payments.reference,
       state: payments.state,
       verifiedAt: payments.verifiedAt,
+      metaJson: payments.metaJson,
       receiptMediaId: payments.receiptMediaId,
       receiptNote: payments.receiptNote,
       reviewedBy: payments.reviewedBy,
@@ -592,9 +597,12 @@ export async function listAdminPayments(
       // plan summary
       planCode: plans.code,
       planNameFa: plans.nameFa,
+      // reviewer summary (round 19 payment popup)
+      reviewedByName: sql<string | null>`NULLIF(CONCAT(${reviewer.firstName}, ' ', ${reviewer.lastName}), ' ')`,
     })
     .from(payments)
     .leftJoin(users, eq(users.id, payments.tenantId))
+    .leftJoin(reviewer, eq(reviewer.id, payments.reviewedBy))
     .leftJoin(plans, eq(plans.id, payments.planId))
     .where(where)
     .orderBy(desc(payments.createdAt))
@@ -778,6 +786,7 @@ export interface PlanPatch {
   isActive?: boolean;
   limitsJson?: Record<string, unknown>;
   featuresJson?: Record<string, unknown>;
+  pricingJson?: Record<string, unknown>;
 }
 
 const PLAN_LIMIT_KEYS = ['max_channels', 'max_posts', 'max_bots', 'max_schedules', 'ai_monthly', 'storage_mb'] as const;
@@ -802,6 +811,41 @@ function numericLimit(record: Record<string, unknown>, keys: readonly string[]):
   return Object.entries(record).every(([k, v]) => keys.includes(k) && typeof v === 'number' && Number.isFinite(v) && v >= 0);
 }
 
+/**
+ * Round 19 — strict admin-input validation for the discount model.
+ *  - renewalDiscountPercent: integer 0-90 (optional, default 0);
+ *  - durationDiscounts: object months(1-36) → percent(0-90), ≤12 rows.
+ * Throws a Persian 422 on the first offending field.
+ */
+function validatePlanPricingInput(raw: Record<string, unknown>): PlanPricing {
+  const renewalRaw = raw.renewalDiscountPercent;
+  const renewal = renewalRaw === undefined ? 0 : Number(renewalRaw);
+  if (!Number.isInteger(renewal) || renewal < 0 || renewal > 90) {
+    throw new AppError(ERR.VALIDATION('درصد تخفیف تمدید باید عددی بین ۰ تا ۹۰ باشد.'));
+  }
+  const durationSrc = raw.durationDiscounts;
+  if (durationSrc !== undefined && (typeof durationSrc !== 'object' || durationSrc === null || Array.isArray(durationSrc))) {
+    throw new AppError(ERR.VALIDATION('قالب تخفیف‌های مدت خرید معتبر نیست.'));
+  }
+  const durationDiscounts: Record<string, number> = {};
+  const entries = Object.entries((durationSrc ?? {}) as Record<string, unknown>);
+  if (entries.length > 12) {
+    throw new AppError(ERR.VALIDATION('حداکثر ۱۲ ردیف تخفیف مدت خرید مجاز است.'));
+  }
+  for (const [k, v] of entries) {
+    const months = Number(k);
+    const pct = Number(v);
+    if (!Number.isInteger(months) || months < 1 || months > 36) {
+      throw new AppError(ERR.VALIDATION('مدت تخفیف باید عددی بین ۱ تا ۳۶ ماه باشد.'));
+    }
+    if (!Number.isInteger(pct) || pct < 0 || pct > 90) {
+      throw new AppError(ERR.VALIDATION(`درصد تخفیف برای «${months} ماه» باید عددی بین ۰ تا ۹۰ باشد.`));
+    }
+    durationDiscounts[String(months)] = pct;
+  }
+  return { renewalDiscountPercent: renewal, durationDiscounts };
+}
+
 export async function createPlan(input: {
   code: string;
   nameFa: string;
@@ -809,6 +853,7 @@ export async function createPlan(input: {
   periodDays: number;
   limitsJson?: Record<string, unknown>;
   featuresJson?: Record<string, unknown>;
+  pricingJson?: Record<string, unknown>;
 }): Promise<{ id: string }> {
   const db = getDb();
   const code = input.code.trim();
@@ -823,6 +868,7 @@ export async function createPlan(input: {
   if (!Object.values(features).every((v) => typeof v === 'boolean')) {
     throw new AppError(ERR.VALIDATION('قالب امکانات پلن معتبر نیست.'));
   }
+  const pricing = validatePlanPricingInput(input.pricingJson ?? {});
 
   const id = newId();
   await db.insert(plans).values({
@@ -833,6 +879,7 @@ export async function createPlan(input: {
     periodDays: Math.min(3650, Math.max(1, Math.floor(input.periodDays))),
     limitsJson: limits,
     featuresJson: features,
+    pricingJson: pricing,
     sortOrder: 0,
     isActive: 1,
   });
@@ -863,6 +910,7 @@ export async function updatePlan(planId: string, patch: PlanPatch): Promise<void
     isActive: number;
     limitsJson: PlanLimits;
     featuresJson: PlanFeatures;
+    pricingJson: PlanPricing;
   }> = {};
   if (patch.nameFa !== undefined) update.nameFa = patch.nameFa.trim().slice(0, 80);
   if (patch.priceRial !== undefined) update.priceRial = Math.max(0, Math.floor(patch.priceRial));
@@ -879,6 +927,9 @@ export async function updatePlan(planId: string, patch: PlanPatch): Promise<void
       throw new AppError(ERR.VALIDATION('قالب امکانات پلن معتبر نیست.'));
     }
     update.featuresJson = patch.featuresJson as unknown as PlanFeatures;
+  }
+  if (patch.pricingJson !== undefined) {
+    update.pricingJson = validatePlanPricingInput(patch.pricingJson);
   }
   if (Object.keys(update).length === 0) return;
   await db.update(plans).set(update).where(eq(plans.id, planId));
@@ -926,37 +977,136 @@ export async function putSettings(map: Record<string, unknown>): Promise<number>
 const BROADCAST_BATCH = 500;
 const BROADCAST_MAX_BATCHES = 1000; // hard bound: 500k users
 
-/** Broadcast (§27): notify ALL ACTIVE users in bounded batches of 500. */
-export async function broadcast(actorId: string, titleFa: string, bodyFa: string): Promise<number> {
+export type BroadcastTarget =
+  | { kind: 'ALL' }
+  | { kind: 'ROLE'; role: 'USER' | 'SUPPORT' | 'SUPER_ADMIN' }
+  | { kind: 'PLAN'; planId: string }
+  | { kind: 'USERS'; userIds: string[] };
+
+async function notifyBatched(extraWhere: ReturnType<typeof eq> | undefined, titleFa: string, bodyFa: string): Promise<number> {
   const db = getDb();
   let notified = 0;
   let cursor = '';
   for (let batch = 0; batch < BROADCAST_MAX_BATCHES; batch++) {
-    const rows = cursor
-      ? await db
-          .select({ id: users.id })
-          .from(users)
-          .where(and(eq(users.status, 'ACTIVE'), sql`${users.id} > ${cursor}`))
-          .orderBy(users.id)
-          .limit(BROADCAST_BATCH)
-      : await db
-          .select({ id: users.id })
-          .from(users)
-          .where(eq(users.status, 'ACTIVE'))
-          .orderBy(users.id)
-          .limit(BROADCAST_BATCH);
+    const conds = [
+      eq(users.status, 'ACTIVE'),
+      ...(extraWhere ? [extraWhere] : []),
+      ...(cursor ? [sql`${users.id} > ${cursor}`] : []),
+    ];
+    const rows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(...conds))
+      .orderBy(users.id)
+      .limit(BROADCAST_BATCH);
     if (rows.length === 0) break;
     for (const r of rows) {
       await notifyTenant({ tenantId: r.id, kind: 'BROADCAST', titleFa, bodyFa });
       notified++;
     }
-    const last = rows[rows.length - 1];
-    if (!last) break;
-    cursor = last.id;
+    const lastUser = rows[rows.length - 1];
+    if (!lastUser) break;
+    cursor = lastUser.id;
     if (rows.length < BROADCAST_BATCH) break;
   }
-  void actorId;
   return notified;
+}
+
+/**
+ * Broadcast (§27, extended round 19): targeted notifications.
+ *  - ALL: every ACTIVE user (original behavior);
+ *  - ROLE: ACTIVE users with the given role (گروه کاربری);
+ *  - PLAN: tenants with an ACTIVE subscription on the plan (گروه اشتراک);
+ *  - USERS: explicit member list — sent regardless of status, because the
+ *    admin deliberately picked each recipient (اعضای خاص).
+ */
+export async function broadcast(
+  actorId: string,
+  titleFa: string,
+  bodyFa: string,
+  target: BroadcastTarget = { kind: 'ALL' }
+): Promise<number> {
+  const db = getDb();
+  let notified = 0;
+
+  if (target.kind === 'USERS') {
+    const ids = Array.from(new Set(target.userIds));
+    for (const id of ids) {
+      await notifyTenant({ tenantId: id, kind: 'BROADCAST', titleFa, bodyFa });
+      notified++;
+    }
+    void actorId;
+    return notified;
+  }
+
+  if (target.kind === 'PLAN') {
+    // ACTIVE subscriptions on the plan, joined to ACTIVE users; paged by
+    // cursor on subscriptions.id to stay within bounded batches.
+    let cursor = '';
+    for (let batch = 0; batch < BROADCAST_MAX_BATCHES; batch++) {
+      const conds = [
+        eq(subscriptions.planId, target.planId),
+        eq(subscriptions.state, 'ACTIVE'),
+        gt(subscriptions.expiresAt, new Date()),
+        ...(cursor ? [sql`${subscriptions.id} > ${cursor}`] : []),
+      ];
+      const rows = await db
+        .select({ subId: subscriptions.id, tenantId: subscriptions.tenantId, status: users.status })
+        .from(subscriptions)
+        .innerJoin(users, eq(users.id, subscriptions.tenantId))
+        .where(and(...conds))
+        .orderBy(subscriptions.id)
+        .limit(BROADCAST_BATCH);
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        if (r.status !== 'ACTIVE') continue;
+        await notifyTenant({ tenantId: r.tenantId, kind: 'BROADCAST', titleFa, bodyFa });
+        notified++;
+      }
+      const lastSub = rows[rows.length - 1];
+      if (!lastSub) break;
+      cursor = lastSub.subId;
+      if (rows.length < BROADCAST_BATCH) break;
+    }
+    void actorId;
+    return notified;
+  }
+
+  notified = await notifyBatched(
+    target.kind === 'ROLE' ? eq(users.role, target.role) : undefined,
+    titleFa,
+    bodyFa
+  );
+  return notified;
+}
+
+/**
+ * Round 19 — target-picker data for the broadcast page: ACTIVE-user counts per
+ * role and per active plan (one grouped query each + the plan catalog).
+ */
+export async function getBroadcastTargets(): Promise<{
+  roles: Array<{ role: string; count: number }>;
+  plans: Array<{ id: string; nameFa: string; subscribers: number }>;
+}> {
+  const db = getDb();
+  const roleRows = await db
+    .select({ role: users.role, value: count() })
+    .from(users)
+    .where(eq(users.status, 'ACTIVE'))
+    .groupBy(users.role);
+
+  const planRows = await db.select({ id: plans.id, nameFa: plans.nameFa }).from(plans).where(eq(plans.isActive, 1)).orderBy(plans.sortOrder);
+  const subRows = await db
+    .select({ planId: subscriptions.planId, value: count() })
+    .from(subscriptions)
+    .where(and(eq(subscriptions.state, 'ACTIVE'), gt(subscriptions.expiresAt, new Date())))
+    .groupBy(subscriptions.planId);
+  const subByPlan = new Map(subRows.map((r) => [r.planId, Number(r.value)]));
+
+  return {
+    roles: roleRows.map((r) => ({ role: r.role, count: Number(r.value) })),
+    plans: planRows.map((p) => ({ id: p.id, nameFa: p.nameFa, subscribers: subByPlan.get(p.id) ?? 0 })),
+  };
 }
 
 export async function releaseChannel(actorId: string, platform: 'telegram' | 'bale' | 'rubika', channelRef: string): Promise<void> {

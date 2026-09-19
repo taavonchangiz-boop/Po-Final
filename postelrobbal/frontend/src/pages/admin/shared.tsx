@@ -166,6 +166,21 @@ export interface AdminPaymentRow {
   tenantId?: string | null;
   userEmail?: string | null;
   createdAt?: string | null;
+  /* Round 19 detail-popup fields */
+  months?: number | null;
+  gateway?: string | null;
+  gatewayRef?: string | null;
+  reference?: string | null;
+  verifiedAt?: string | null;
+  metaJson?: { pricing?: Record<string, number> } | null;
+  receiptMediaId?: string | null;
+  receiptNote?: string | null;
+  reviewedByName?: string | null;
+  reviewedAt?: string | null;
+  userFirstName?: string | null;
+  userLastName?: string | null;
+  userMobile?: string | null;
+  planNameFa?: string | null;
 }
 
 export interface AuditRow {
@@ -294,6 +309,7 @@ export const ADMIN_SECTIONS: AdminSectionGroup[] = [
       { to: '/dashboard/admin/sms', icon: 'notifications', label: 'پیامک', short: 'پیامک' },
       { to: '/dashboard/admin/email', icon: 'posts', label: 'ایمیل', short: 'ایمیل' },
       { to: '/dashboard/admin/tickets', icon: 'support', label: 'تیکت‌های پشتیبانی', short: 'تیکت‌ها' },
+      { to: '/dashboard/admin/support-team', icon: 'support', label: 'تیم پشتیبانی', short: 'پشتیبان‌ها' },
       { to: '/dashboard/admin/broadcast', icon: 'more', label: 'اطلاع‌رسانی', short: 'اطلاع‌رسانی' },
     ],
   },

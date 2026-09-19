@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
 import { roleHasPermission } from '../../security/permissions.js';
-import { TICKET_CATEGORIES, listTickets, createTicket, getTicket, addTicketMessage, closeTicket, type ActorRole } from './support.service.js';
+import { listTickets, createTicket, getTicketCategories, getTicket, addTicketMessage, closeTicket, type ActorRole } from './support.service.js';
 import { parseWith } from '../../core/validation.js';
 import { uploadMedia } from '../media/media.service.js';
 
@@ -39,18 +39,67 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
     const data = await listTickets(me.id, page, pageSize);
     return {
       success: true,
-      data: { ...data, categories: TICKET_CATEGORIES },
+      data: { ...data, categories: await getTicketCategories() },
     };
   });
 
   app.post('/support/tickets', { preHandler: [app.requireAuth] }, async (req) => {
     const me = auth(req);
-    const input = parse(createTicketSchema, req.body);
-    const data = await createTicket(me.id, me.id, {
-      subject: input.subject,
-      category: input.category ?? 'GENERAL',
-      body: input.body,
-    });
+
+    // Round 19: multipart "subject"+"category"+"body" (+ optional "file") so a
+    // ticket can be opened with an attachment right away; JSON stays accepted.
+    let subject: string | null = null;
+    let category: string | null = null;
+    let body: string | null = null;
+    let file: { buffer: Buffer; mime: string; fileName: string } | null = null;
+    if (req.isMultipart()) {
+      for await (const part of req.parts()) {
+        if (part.type === 'file') {
+          if (file) continue; // one attachment per message — defensive
+          const mime = part.mimetype.toLowerCase();
+          if (!ATTACHMENT_MIME_ALLOWED.has(mime)) {
+            throw new AppError(ERR.VALIDATION('فرمت فایل مجاز نیست. تصویر (JPG، PNG، WebP، GIF) یا PDF ارسال کنید.'));
+          }
+          let buffer: Buffer;
+          try {
+            buffer = await part.toBuffer();
+          } catch {
+            throw new AppError(ERR.VALIDATION('حجم فایل بیش از حد مجاز است.'));
+          }
+          const fileName = (part.filename ?? 'file').trim().slice(0, 255) || 'file';
+          file = { buffer, mime, fileName };
+        } else if (part.type === 'field') {
+          if (part.fieldname === 'subject' && typeof part.value === 'string') subject = part.value;
+          else if (part.fieldname === 'category' && typeof part.value === 'string') category = part.value;
+          else if (part.fieldname === 'body' && typeof part.value === 'string') body = part.value;
+        }
+      }
+      if (subject === null || subject.trim().length < 3 || body === null || body.trim().length < 5) {
+        throw new AppError(ERR.VALIDATION('موضوع و متن تیکت را کامل وارد کنید.'));
+      }
+    } else {
+      const input = parse(createTicketSchema, req.body);
+      subject = input.subject;
+      category = input.category ?? 'GENERAL';
+      body = input.body;
+    }
+
+    let attachment: { mediaId: string; fileName: string; sizeBytes: number; mime: string } | undefined;
+    if (file) {
+      const uploaded = await uploadMedia(me.id, {
+        buffer: file.buffer,
+        mimeType: file.mime,
+        maxBytes: ATTACHMENT_MAX_BYTES,
+      });
+      attachment = { mediaId: uploaded.id, fileName: file.fileName, sizeBytes: uploaded.sizeBytes, mime: uploaded.mime };
+    }
+
+    const data = await createTicket(
+      me.id,
+      me.id,
+      { subject, category: category ?? 'GENERAL', body },
+      attachment
+    );
     return { success: true, data };
   });
 

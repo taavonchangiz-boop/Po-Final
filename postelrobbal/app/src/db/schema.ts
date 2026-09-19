@@ -74,6 +74,8 @@ export const plans = mysqlTable('plans', {
   periodDays: int('period_days').notNull().default(30),
   limitsJson: json('limits_json').$type<PlanLimits>().notNull(),
   featuresJson: json('features_json').$type<PlanFeatures>().notNull(),
+  // Round 19: discount model — { renewalDiscountPercent, durationDiscounts }.
+  pricingJson: json('pricing_json').$type<PlanPricing>().notNull(),
   sortOrder: int('sort_order').notNull().default(0),
   isActive: tinyint('is_active').notNull().default(1),
   createdAt: ts(),
@@ -92,6 +94,20 @@ export interface PlanFeatures {
   auto_responder: boolean;
   woocommerce: boolean;
   api_access: boolean;
+}
+
+/**
+ * Round 19 pricing model (migration 0005):
+ *  - renewalDiscountPercent: تخفیف تمدید/ارتقا — applied when the buyer still
+ *    holds an ACTIVE, unexpired subscription (early renewal or upgrade; free
+ *    plan users qualify until their free period ends).
+ *  - durationDiscounts: تخفیف مدت خرید — map of months → percent (3/6/12 or
+ *    any other purchasable duration).
+ * Both are 0-90 and combine additively at checkout (capped at 90).
+ */
+export interface PlanPricing {
+  renewalDiscountPercent: number;
+  durationDiscounts: Record<string, number>;
 }
 
 export const subscriptions = mysqlTable('subscriptions', {

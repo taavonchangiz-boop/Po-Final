@@ -82,13 +82,16 @@ export default function Support() {
   const [closeOpen, setCloseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Attachment upload (contract 14-contract item 7)
+  // Attachment upload (contract 14-contract item 7 + round 19: also on create)
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const newAttachInputRef = useRef<HTMLInputElement | null>(null);
+  const [newAttachFile, setNewAttachFile] = useState<File | null>(null);
 
   const pickAttach = useCallback(
-    (file: File | null | undefined) => {
+    (file: File | null | undefined, target: 'reply' | 'new' = 'reply') => {
+      const setFile = target === 'new' ? setNewAttachFile : setAttachFile;
       if (!file) return;
       if (!ATTACH_MIME_ALLOWED.has(file.type)) {
         toast.error('فرمت فایل مجاز نیست. تصویر (JPG، PNG، WebP) یا PDF انتخاب کنید.');
@@ -98,7 +101,7 @@ export default function Support() {
         toast.error('حجم فایل باید حداکثر ۱۰ مگابایت باشد.');
         return;
       }
-      setAttachFile(file);
+      setFile(file);
     },
     [toast]
   );
@@ -157,12 +160,19 @@ export default function Support() {
     }
     setCreating(true);
     try {
-      await api.post('/api/v1/support/tickets', { subject: subject.trim(), category, body: body.trim() });
+      // Round 19: multipart so the ticket can open with an attachment.
+      const fd = new FormData();
+      fd.append('subject', subject.trim());
+      fd.append('category', category);
+      fd.append('body', body.trim());
+      if (newAttachFile) fd.append('file', newAttachFile);
+      await api.postForm('/api/v1/support/tickets', fd);
       toast.success('تیکت شما ثبت شد؛ به‌زودی پاسخ می‌دهیم.');
       setNewOpen(false);
       setSubject('');
       setBody('');
       setCategory('GENERAL');
+      setNewAttachFile(null);
       await load(1);
     } catch (err) {
       toast.error(err instanceof ApiRequestError ? err.message : 'ثبت تیکت ناموفق بود.');
@@ -213,7 +223,7 @@ export default function Support() {
           <h1 style={{ fontSize: 21, fontWeight: 800 }}>پشتیبانی و تیکت‌ها</h1>
           <p style={{ color: 'var(--text-2)', fontSize: 13.5 }}>سؤال یا مشکل خود را ثبت کنید؛ تیم پشتیبانی پاسخ می‌دهد.</p>
         </div>
-        <Button onClick={() => setNewOpen(true)}>+ تیکت جدید</Button>
+        <Button onClick={() => { setNewAttachFile(null); setNewOpen(true); }}>+ تیکت جدید</Button>
       </div>
 
       {loading ? (
@@ -223,7 +233,7 @@ export default function Support() {
           icon="🎫"
           title="تیکتی ثبت نکرده‌اید"
           description="هر سؤال یا مشکلی دربارهٔ حساب، پرداخت یا ارسال پیام دارید، از اینجا بپرسید."
-          action={<Button onClick={() => setNewOpen(true)}>ثبت اولین تیکت</Button>}
+          action={<Button onClick={() => { setNewAttachFile(null); setNewOpen(true); }}>ثبت اولین تیکت</Button>}
         />
       ) : (
         <Card>
@@ -269,6 +279,69 @@ export default function Support() {
         <Field label="متن تیکت" required hint="توضیح کامل بدهید تا سریع‌تر پاسخ بگیرید؛ در صورت خطای ارسال، متن خطا را هم بنویسید.">
           <Textarea rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
         </Field>
+
+        <Field label="پیوست (اختیاری)" hint="JPG، PNG، WebP یا PDF · حداکثر ۱۰ مگابایت">
+          <div
+            className={`attach-zone${dragOver ? ' is-dragover' : ''}`}
+            role="button"
+            tabIndex={0}
+            aria-label="افزودن پیوست به تیکت: فایل را بکشید و رها کنید یا کلیک کنید"
+            onClick={() => newAttachInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                newAttachInputRef.current?.click();
+              }
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              pickAttach(e.dataTransfer.files?.[0], 'new');
+            }}
+          >
+            <span className="attach-zone__icon" aria-hidden="true">
+              <PaperclipIcon />
+            </span>
+            <span>
+              <span className="attach-zone__title">فایل را بکشید و اینجا رها کنید یا کلیک کنید</span>
+              <span className="attach-zone__hint">تصویر یا PDF پیوست تیکت</span>
+            </span>
+          </div>
+          <input
+            ref={newAttachInputRef}
+            type="file"
+            accept={ATTACH_ACCEPT}
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              pickAttach(e.target.files?.[0], 'new');
+              e.target.value = '';
+            }}
+          />
+        </Field>
+
+        {newAttachFile && (
+          <div style={{ marginBottom: 12 }}>
+            <span className="file-chip">
+              <span aria-hidden="true">{newAttachFile.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+              <span className="file-chip__name">{newAttachFile.name}</span>
+              <span className="file-chip__meta">{faFileSize(newAttachFile.size)}</span>
+              <button
+                type="button"
+                className="file-chip__remove"
+                onClick={() => setNewAttachFile(null)}
+                aria-label={`حذف پیوست ${newAttachFile.name}`}
+              >
+                ✕
+              </button>
+            </span>
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 10 }}>
           <Button onClick={() => void createTicket()} loading={creating}>ثبت تیکت</Button>
           <Button variant="ghost" onClick={() => setNewOpen(false)}>انصراف</Button>
