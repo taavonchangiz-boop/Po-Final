@@ -170,9 +170,12 @@ export const WordpressService = {
 
   /* ------------------------------ webhook side ------------------------------ */
 
-  /** HMAC-SHA256 hex of the raw body (plugin → Postyar direction). */
-  computeSignature(rawBody: Buffer, secret: string): string {
-    return createHmac('sha256', secret).update(rawBody).digest('hex');
+  /**
+   * Canonical HMAC-SHA256 hex over `timestamp + "\n" + rawBody` with the site secret
+   * (shared contract with the Postyar Connector plugin, both directions).
+   */
+  computeSignature(timestamp: string, rawBody: Buffer, secret: string): string {
+    return createHmac('sha256', secret).update(`${timestamp}\n`).update(rawBody).digest('hex');
   },
 
   /** Constant-time signature + replay-window check (5 minutes). */
@@ -180,7 +183,7 @@ export const WordpressService = {
     if (signature === undefined || timestamp === undefined) return false;
     const ts = Number(timestamp);
     if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false;
-    const expected = WordpressService.computeSignature(rawBody, decryptSecret(site.secretEncrypted));
+    const expected = WordpressService.computeSignature(timestamp, rawBody, decryptSecret(site.secretEncrypted));
     const presented = signature.startsWith('sha256=') ? signature.slice(7) : signature;
     if (presented.length !== expected.length) return false;
     return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(presented, 'utf8'));

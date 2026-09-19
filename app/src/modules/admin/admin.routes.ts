@@ -4,10 +4,10 @@
  * every mutation is audited (admin.service + AnalyticsService.trackAudit).
  */
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { asc, count, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { sendCreated, sendOk } from '../../core/envelope.js';
-import { validationError } from '../../core/errors.js';
+import { notFound, validationError } from '../../core/errors.js';
 import { AnalyticsService } from '../../core/events.js';
 import { enqueueOutbox } from '../../core/outbox.js';
 import { requireRole } from '../../security/tenant.js';
@@ -16,7 +16,7 @@ import { PaymentService } from '../billing/payment.service.js';
 import { createNotification } from '../notifications/notifications.service.js';
 import { SupportService } from '../support/support.service.js';
 import { db } from '../../db/client.js';
-import { supportTickets } from '../../db/schema.js';
+import { supportTickets, ticketMessages } from '../../db/schema.js';
 import { AdminService } from './admin.service.js';
 
 const PaginationSchema = z.object({
@@ -97,13 +97,52 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     );
     if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
     const where = parsed.data.status ? eq(supportTickets.status, parsed.data.status) : undefined;
-    const items = await db
+    const [items, totalRows] = await Promise.all([
+      db
+        .select()
+        .from(supportTickets)
+        .where(where)
+        .orderBy(desc(supportTickets.id))
+        .limit(parsed.data.limit)
+        .offset((parsed.data.page - 1) * parsed.data.limit),
+      db.select({ value: count() }).from(supportTickets).where(where),
+    ]);
+    return sendOk(reply, { items, total: Number(totalRows[0]?.value ?? 0), page: parsed.data.page, limit: parsed.data.limit });
+  });
+
+  app.get('/api/v1/admin/tickets/:id', { preHandler: adminPreHandler }, async (request, reply) => {
+    const params = z.object({ id: z.coerce.number().int().min(1) }).safeParse(request.params);
+    if (!params.success) throw validationError('داده‌های ورودی معتبر نیستند.', params.error.flatten());
+    const ticketRows = await db.select().from(supportTickets).where(eq(supportTickets.id, params.data.id)).limit(1);
+    const ticket = ticketRows[0];
+    if (!ticket) throw notFound('تیکت یافت نشد.');
+    const messages = await db
       .select()
-      .from(supportTickets)
-      .where(where)
-      .limit(parsed.data.limit)
-      .offset((parsed.data.page - 1) * parsed.data.limit);
-    return sendOk(reply, { items, page: parsed.data.page, limit: parsed.data.limit });
+      .from(ticketMessages)
+      .where(eq(ticketMessages.ticketId, ticket.id))
+      .orderBy(asc(ticketMessages.id));
+    return sendOk(reply, { ticket, messages });
+  });
+
+  app.patch('/api/v1/admin/tickets/:id', { preHandler: adminPreHandler }, async (request, reply) => {
+    const params = z.object({ id: z.coerce.number().int().min(1) }).safeParse(request.params);
+    if (!params.success) throw validationError('داده‌های ورودی معتبر نیستند.', params.error.flatten());
+    const parsed = z.object({ status: z.enum(['OPEN', 'ANSWERED', 'PENDING_USER', 'CLOSED']) }).safeParse(request.body);
+    if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
+    const updated = await db
+      .update(supportTickets)
+      .set({ status: parsed.data.status, updatedAt: new Date() })
+      .where(eq(supportTickets.id, params.data.id));
+    if (updated[0]?.affectedRows === 0) throw notFound('تیکت یافت نشد.');
+    AnalyticsService.trackAudit({
+      actorUserId: request.currentUser!.id,
+      action: 'admin.ticket.status_changed',
+      subjectType: 'ticket',
+      subjectId: params.data.id,
+      data: { status: parsed.data.status },
+    });
+    const ticketRows = await db.select().from(supportTickets).where(eq(supportTickets.id, params.data.id)).limit(1);
+    return sendOk(reply, { ticket: ticketRows[0] ?? null });
   });
 
   app.post('/api/v1/admin/tickets/:id/reply', { preHandler: adminPreHandler }, async (request, reply) => {

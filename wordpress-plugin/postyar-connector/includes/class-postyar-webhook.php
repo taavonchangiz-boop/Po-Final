@@ -426,24 +426,6 @@ class Postyar_Webhook {
 
                 $code = is_array( $response ) ? (int) wp_remote_retrieve_response_code( $response ) : 0;
 
-                // سازگاری: نسخهٔ فعلی سرور امضای «فقط بدنه» را می‌پذیرد؛ در ۴۰۱ یک‌بار با آن طرح تلاش می‌کنیم.
-                if ( 401 === $code ) {
-                        $headers['X-Postyar-Signature'] = 'sha256=' . Postyar_Signature::sign_body_only( $secret, $body );
-
-                        $response = wp_remote_post(
-                                $endpoint,
-                                array(
-                                        'timeout'     => self::REQUEST_TIMEOUT,
-                                        'blocking'    => true,
-                                        'sslverify'   => true,
-                                        'data_format' => 'body',
-                                        'body'        => $body,
-                                        'headers'     => $headers,
-                                )
-                        );
-                        $code = is_array( $response ) ? (int) wp_remote_retrieve_response_code( $response ) : 0;
-                }
-
                 $ok = $code >= 200 && $code < 300;
 
                 Postyar_DB::log( $event_type, $event_id, $ok ? Postyar_DB::STATUS_OK : Postyar_DB::STATUS_FAILED, $code );

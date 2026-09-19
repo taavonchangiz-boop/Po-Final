@@ -3,9 +3,10 @@
  * Connector endpoint with SSRF-guarded, signed requests and upserts them.
  *
  * Signature contract (pull direction): we send
- *   X-Postyar-Signature: sha256=HMAC_SHA256('', site secret) (hex)
+ *   X-Postyar-Signature: sha256=HMAC_SHA256(secret, timestamp + "\n" + body) (hex)
  *   X-Postyar-Timestamp: unix seconds
  *   X-Postyar-Site: publicId
+ * For GET the body is empty, so the preimage is `timestamp + "\n"`.
  * The plugin verifies these; the response itself is trusted only over TLS
  * from the SSRF-validated origin (pull responses are not signed in v1).
  */
@@ -30,8 +31,9 @@ export interface WpSyncData {
   siteId: number;
 }
 
-function signEmptyBody(secret: string): string {
-  return createHmac('sha256', secret).update('').digest('hex');
+/** Canonical signature preimage: timestamp + "\n" + body (empty for GET). */
+function signPullRequest(secret: string, timestamp: string): string {
+  return createHmac('sha256', secret).update(`${timestamp}\n`).digest('hex');
 }
 
 function parseProducts(json: unknown): ProductPayload[] {
@@ -74,14 +76,15 @@ export async function runWpSync(data: WpSyncData): Promise<{ ok: boolean; synced
   }
 
   try {
+    const ts = String(Math.floor(Date.now() / 1000));
     const res = await fetchWithTimeout(
       url.toString(),
       {
         method: 'GET',
         headers: {
           accept: 'application/json',
-          'X-Postyar-Signature': `sha256=${signEmptyBody(secret)}`,
-          'X-Postyar-Timestamp': String(Math.floor(Date.now() / 1000)),
+          'X-Postyar-Signature': `sha256=${signPullRequest(secret, ts)}`,
+          'X-Postyar-Timestamp': ts,
           'X-Postyar-Site': site.publicId,
         },
       },

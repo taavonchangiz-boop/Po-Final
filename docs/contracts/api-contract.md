@@ -28,7 +28,7 @@ Cursor lists accept `cursor` (event/delivery id), `limit` → `{ items, nextCurs
 | Method | Path | Purpose |
 |---|---|---|
 | GET | /channels | List own channels (paginated, filter by provider/status). |
-| POST | /channels | Create: `{provider, chatId, title, botToken}`. Token encrypted at rest; status PENDING until verify. Plan limit enforced. |
+| POST | /channels | Create: `{provider, chatId, title, token}`. Token encrypted at rest; status PENDING until verify. Plan limit enforced. |
 | GET | /channels/:id | Channel detail. |
 | PATCH | /channels/:id | Update title / rotate bot token. |
 | DELETE | /channels/:id | Disconnect (soft: status DISCONNECTED). |
@@ -145,6 +145,8 @@ Cursor lists accept `cursor` (event/delivery id), `limit` → `{ items, nextCurs
 | PATCH | /admin/users/:id | role/status change (audited, server-checked). |
 | GET | /admin/audit-logs | Audit trail (paginated, filterable). |
 | GET | /admin/payments, /admin/tickets | Operational lists. |
+| GET | /admin/tickets/:id | Admin view of any ticket thread. |
+| PATCH | /admin/tickets/:id | Ticket status change (audited). |
 | POST | /admin/tickets/:id/reply | Staff reply. |
 | GET/PATCH | /admin/plans, /admin/plans/:id | Plan management. |
 | GET/PATCH | /admin/settings | System settings (referral reward, retention days). |

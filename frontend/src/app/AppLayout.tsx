@@ -190,7 +190,8 @@ export default function AppLayout() {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
   const [loggingOut, setLoggingOut] = useState(false);
-  const unread = data?.tenant.unreadNotifications ?? 0;
+  // GET /me returns unreadNotifications at the top level (no tenant wrapper).
+  const unread = data?.unreadNotifications ?? 0;
   const isAdmin = data?.user.role === 'ADMIN' || data?.user.role === 'SUPER_ADMIN';
 
   async function handleLogout() {
