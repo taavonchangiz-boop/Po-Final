@@ -1,0 +1,37 @@
+# Postyar — source-first repo (release zip ships built dist/; git tracks sources)
+# Dependencies
+node_modules/
+
+# Secrets — never commit real env files
+.env
+.env.*
+!.env.example
+
+# Build output (rebuilt by CI / make-release.sh; not tracked)
+app/dist/
+frontend/dist/
+
+# Logs
+*.log
+dev.log
+logs/
+
+# Runtime data, private storage, uploads
+private/
+storage/
+uploads/
+
+# Coverage / temp
+coverage/
+tmp/
+
+# Local databases & dumps (never commit DB files)
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.dump
+
+# OS noise
+.DS_Store
+Thumbs.db
+postyar-production-final.zip
