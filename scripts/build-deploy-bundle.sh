@@ -5,7 +5,7 @@
 # Produces a ready-to-upload bundle with the required hosting layout:
 #
 #   deploy-bundle/
-#     postyar/         ← main files: backend (app), frontend source, configs, docs
+#     postelrobbal/    ← main files: backend (app), frontend source, configs, docs
 #     public_html/     ← public static assets: index.html, assets/*.js|css, images
 #     DEPLOY.md        ← short Persian upload instructions
 #
@@ -29,28 +29,28 @@ ok "frontend/dist ready"
 # 2) Prepare bundle layout
 step "Assembling bundle"
 rm -rf "$OUT"
-mkdir -p "$OUT/public_html" "$OUT/postyar"
+mkdir -p "$OUT/public_html" "$OUT/postelrobbal"
 
 # 2a. public_html: the compiled SPA (css/js/images) — the ONLY public folder
 cp -r "$ROOT/frontend/dist/." "$OUT/public_html/"
 ok "public_html/ ← index.html + assets/* (js, css) + images"
 
-# 2b. postyar/: everything private (backend + sources + docs + plugin)
-mkdir -p "$OUT/postyar/app"
-cp -r "$ROOT/app/src" "$OUT/postyar/app/src"
-cp "$ROOT/app/package.json" "$OUT/postyar/app/" 2>/dev/null || true
-cp "$ROOT/app/tsconfig.json" "$OUT/postyar/app/" 2>/dev/null || true
-cp "$ROOT/app/Passengerfile.js" "$OUT/postyar/app/" 2>/dev/null || true
-cp -r "$ROOT/database" "$OUT/postyar/database"
-cp -r "$ROOT/scripts" "$OUT/postyar/scripts"
-cp -r "$ROOT/wordpress-plugin" "$OUT/postyar/wordpress-plugin"
-cp -r "$ROOT/docs" "$OUT/postyar/docs" 2>/dev/null || true
+# 2b. postelrobbal/: everything private (backend + sources + docs + plugin)
+mkdir -p "$OUT/postelrobbal/app"
+cp -r "$ROOT/app/src" "$OUT/postelrobbal/app/src"
+cp "$ROOT/app/package.json" "$OUT/postelrobbal/app/" 2>/dev/null || true
+cp "$ROOT/app/tsconfig.json" "$OUT/postelrobbal/app/" 2>/dev/null || true
+cp "$ROOT/app/Passengerfile.js" "$OUT/postelrobbal/app/" 2>/dev/null || true
+cp -r "$ROOT/database" "$OUT/postelrobbal/database"
+cp -r "$ROOT/scripts" "$OUT/postelrobbal/scripts"
+cp -r "$ROOT/wordpress-plugin" "$OUT/postelrobbal/wordpress-plugin"
+cp -r "$ROOT/docs" "$OUT/postelrobbal/docs" 2>/dev/null || true
 for f in README.md ARCHITECTURE.md PRODUCT-SPEC.md DEPLOYMENT.md SECURITY.md \
          API.md DATABASE.md OPERATIONS.md TROUBLESHOOTING.md WORDPRESS.md \
          .env.example VERSION; do
-  [ -f "$ROOT/$f" ] && cp "$ROOT/$f" "$OUT/postyar/"
+  [ -f "$ROOT/$f" ] && cp "$ROOT/$f" "$OUT/postelrobbal/"
 done
-ok "postyar/ ← backend + sources + configs + docs (private)"
+ok "postelrobbal/ ← backend + sources + configs + docs (private)"
 
 # 2c. never leak secrets
 find "$OUT" -name '.env' -type f -delete 2>/dev/null || true
@@ -60,15 +60,15 @@ ok "secret scan: no .env inside bundle"
 cat > "$OUT/DEPLOY.md" <<'MD'
 # راهنمای آپلود بسته پُست‌یار
 
-1. محتوای پوشه `postyar/` را در یک پوشه **خارج از public_html** (مثلاً `~/postyar`) قرار دهید.
+1. محتوای پوشه `postelrobbal/` را در یک پوشه **خارج از public_html** (مثلاً `~/postyar`) قرار دهید.
 2. محتوای پوشه `public_html/` را دقیقاً در `public_html` هاست کپی کنید (index.html، assets/، images/).
-3. در پوشه `postyar/app` یک `.env` از روی `.env.example` بسازید و `chmod 600` بدهید.
+3. در پوشه `postelrobbal/app` یک `.env` از روی `.env.example` بسازید و `chmod 600` بدهید.
 4. در هاست: `cd ~/postyar && bash scripts/deploy.sh` (مهاجرت‌ها + health check).
 5. اگر مسیر public_html هاست شما متفاوت است: `PUBLIC_HTML=/مسیر/public_html bash scripts/deploy.sh`.
 
-نکته: تنها پوشه عمومی `public_html` است؛ کل کد سمت سرور در `postyar/` باقی می‌ماند.
+نکته: تنها پوشه عمومی `public_html` است؛ کل کد سمت سرور در `postelrobbal/` باقی می‌ماند.
 MD
 ok "DEPLOY.md written"
 
 step "Bundle ready: $OUT"
-du -sh "$OUT/public_html" "$OUT/postyar" 2>/dev/null || true
+du -sh "$OUT/public_html" "$OUT/postelrobbal" 2>/dev/null || true
