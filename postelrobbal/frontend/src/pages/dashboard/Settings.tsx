@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiRequestError } from '../../lib/api';
+import { api, ApiRequestError, avatarPhotoUrl } from '../../lib/api';
 import { Button, Card, Field, Input, Modal, PageLoading, Select } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
 import { useToast } from '../../lib/toast';
+import { Avatar, AVATAR_CHARACTERS } from '../../components/Avatar';
 
 interface UserSettingsDto {
   id: string;
@@ -35,7 +36,13 @@ function errText(e: unknown): string {
 export default function Settings() {
   const toast = useToast();
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { me, refresh } = useAuth();
+
+  /* Task 17-b: تصویر پروفایل — standard characters + custom photo upload. */
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   // (الف) account info
   const [firstName, setFirstName] = useState('');
@@ -144,14 +151,140 @@ export default function Settings() {
     }
   }, [navigate, refresh, toast]);
 
+  /* ---------------- avatar actions (Task 17-b) ---------------- */
+
+  const pickCharacter = async (key: string) => {
+    if (!me || busyKey) return;
+    setBusyKey(key);
+    try {
+      await api.put('/api/v1/users/me/avatar/character', { value: key });
+      await refresh();
+      toast.success('تصویر پروفایل به‌روزرسانی شد.');
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const uploadPhoto = async (file: File) => {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      await api.postForm('/api/v1/users/me/avatar', fd);
+      await refresh();
+      toast.success('تصویر شخصی بارگذاری شد.');
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('فقط فایل تصویری (JPG، PNG یا WebP) قابل قبول است.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('حجم تصویر باید حداکثر ۵ مگابایت باشد.');
+      return;
+    }
+    void uploadPhoto(file);
+  };
+
+  const removePhoto = async () => {
+    setRemoving(true);
+    try {
+      await api.del('/api/v1/users/me/avatar');
+      await refresh();
+      toast.success('تصویر شخصی حذف شد.');
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   if (loadingInfo) return <PageLoading />;
+
+  const avatarKind = me?.user.avatarKind ?? 'character';
+  const avatarValue = me?.user.avatarValue ?? '';
+  const avatarMediaId = me?.user.avatarMediaId ?? null;
+  const photoUrl = avatarKind === 'photo' && me ? avatarPhotoUrl(me.user.id, avatarMediaId) : undefined;
+  const fullName = me ? `${me.user.firstName} ${me.user.lastName}`.trim() : '';
+  const activeCharacter = AVATAR_CHARACTERS.find((c) => c.key === avatarValue);
+  const avatarBusy = busyKey !== null || uploading || removing;
 
   return (
     <div style={{ display: 'grid', gap: 18, maxWidth: 780 }}>
       <div>
         <h1 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 4px' }}>تنظیمات حساب</h1>
-        <p style={{ color: 'var(--text-2)', fontSize: 13, margin: 0 }}>مدیریت اطلاعات شخصی، رمز عبور و حساب کاربری</p>
+        <p style={{ color: 'var(--text-2)', fontSize: 13, margin: 0 }}>مدیریت تصویر پروفایل، اطلاعات شخصی، رمز عبور و حساب کاربری</p>
       </div>
+
+      {/* (۰) تصویر پروفایل — Task 17-b */}
+      <Card pad="lg">
+        <h3 style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 700 }}>تصویر پروفایل</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 16 }}>
+          <Avatar kind={avatarKind} value={avatarValue} photoUrl={photoUrl} name={fullName} size={72} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{fullName || 'کاربر پُست‌یار'}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>
+              {avatarKind === 'photo'
+                ? 'تصویر شخصی شما فعال است.'
+                : activeCharacter
+                  ? `آواتار استاندارد «${activeCharacter.label}» فعال است.`
+                  : 'یک آواتار استاندارد انتخاب کنید یا تصویر شخصی بارگذاری کنید.'}
+            </div>
+          </div>
+        </div>
+        <div className="pavatar-picker" role="radiogroup" aria-label="انتخاب آواتار استاندارد">
+          {AVATAR_CHARACTERS.map((c) => {
+            const active = avatarKind !== 'photo' && avatarValue === c.key;
+            return (
+              <button
+                key={c.key}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                className={`pavatar-picker__tile${active ? ' is-active' : ''}`}
+                disabled={avatarBusy}
+                onClick={() => void pickCharacter(c.key)}
+              >
+                <Avatar kind="character" value={c.key} size={44} />
+                <span>{c.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={onPickFile}
+            aria-hidden="true"
+            tabIndex={-1}
+          />
+          <Button variant="soft" loading={uploading} onClick={() => fileRef.current?.click()}>
+            آپلود تصویر شخصی
+          </Button>
+          {avatarKind === 'photo' && (
+            <Button variant="danger" loading={removing} onClick={() => void removePhoto()}>
+              حذف تصویر شخصی
+            </Button>
+          )}
+          <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
+            حداکثر ۵ مگابایت؛ تصویر مربعی‌شده و به WebP تبدیل می‌شود.
+          </span>
+        </div>
+      </Card>
 
       <Card pad="lg">
         <h3 style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 700 }}>اطلاعات حساب</h3>

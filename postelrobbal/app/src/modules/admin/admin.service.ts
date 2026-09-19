@@ -203,7 +203,7 @@ export async function listUsers(
   search: string | undefined,
   page: number,
   pageSize: number
-): Promise<{ items: Array<{ id: string; firstName: string; lastName: string; email: string; mobile: string; businessName: string; role: string; status: string; createdAt: Date }>; total: number; page: number; pageSize: number }> {
+): Promise<{ items: Array<{ id: string; firstName: string; lastName: string; email: string; mobile: string; businessName: string; role: string; status: string; avatarKind: string; avatarValue: string; createdAt: Date }>; total: number; page: number; pageSize: number }> {
   const db = getDb();
   const p = Math.max(1, page);
   const size = Math.min(100, Math.max(1, pageSize));
@@ -224,6 +224,9 @@ export async function listUsers(
       businessName: users.businessName,
       role: users.role,
       status: users.status,
+      // Round 17: lets the admin table render standard character avatars.
+      avatarKind: users.avatarKind,
+      avatarValue: users.avatarValue,
       createdAt: users.createdAt,
     })
     .from(users)

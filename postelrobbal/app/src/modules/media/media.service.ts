@@ -1,6 +1,7 @@
 import { promises as fs, createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import sharp from 'sharp';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { media, mediaAccessTokens, ticketMessageAttachments, ticketMessages, tickets } from '../../db/schema.js';
@@ -22,9 +23,21 @@ const MIME_EXT: Record<string, string> = {
   'image/png': 'png',
   'image/webp': 'webp',
   'image/gif': 'gif',
+  'image/avif': 'avif',
+  'image/tiff': 'tiff',
+  'image/bmp': 'bmp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
   'video/mp4': 'mp4',
   'application/pdf': 'pdf',
 };
+
+/** Image allowlist (round 17): every accepted image input is re-encoded to WebP. */
+const IMAGE_MIMES = new Set(Object.keys(MIME_EXT).filter((m) => m.startsWith('image/')));
+
+export function isAllowedImageMime(mime: string): boolean {
+  return IMAGE_MIMES.has(mime.toLowerCase());
+}
 
 export function storageRoot(): string {
   const raw = process.env.STORAGE_DIR;
@@ -50,6 +63,25 @@ export function magicMatches(mime: string, buf: Buffer): boolean {
       return hexAt(0, 3) === '474946';
     case 'image/webp':
       return hexAt(0, 4) === '52494646' && hexAt(8, 4) === '57454250'; // RIFF....WEBP
+    case 'image/avif': {
+      // ISO-BMFF: 'ftyp' box at offset 4, major brand at 8-12 (avif still image,
+      // avis AVIF sequence — both decode through libheif/AV1).
+      const brand = buf.toString('latin1', 8, 12);
+      return buf.toString('latin1', 4, 8) === 'ftyp' && (brand === 'avif' || brand === 'avis');
+    }
+    case 'image/tiff':
+      return hexAt(0, 4) === '49492a00' || hexAt(0, 4) === '4d4d002a'; // II*\0 | MM\0*
+    case 'image/bmp':
+      return hexAt(0, 2) === '424d'; // 'BM'
+    case 'image/heic':
+    case 'image/heif': {
+      // HEIF family: 'ftyp' at offset 4 + compatible brand at 8-12.
+      const brand = buf.toString('latin1', 8, 12);
+      return (
+        buf.toString('latin1', 4, 8) === 'ftyp' &&
+        ['heic', 'heix', 'heim', 'mif1', 'msf1'].includes(brand)
+      );
+    }
     case 'video/mp4':
       return buf.toString('latin1', 4, 8) === 'ftyp'; // box type at offset 4
     case 'application/pdf':
@@ -100,6 +132,57 @@ function safeAbsolutePath(storagePath: string): string {
   return abs;
 }
 
+/**
+ * Round 17 — WebP-only image processing.
+ * - 'media' variant: EXIF auto-orient, fit inside 1920×1920 (no upscaling),
+ *   animated GIF/animated WebP keep their animation (multi-page re-encode).
+ * - 'avatar' variant: deterministic 512×512 centre-crop square, first frame.
+ * Only the encoded WebP buffer is returned — original bytes are never written.
+ */
+export const IMAGE_PROCESS_FAILED = 'پردازش تصویر ناموفق بود. فایل تصویر سالم نیست یا فرمت آن پشتیبانی نمی‌شود.';
+
+export interface ProcessedImage {
+  buffer: Buffer;
+  width: number;
+  height: number;
+  animated: boolean;
+}
+
+export async function processImageToWebp(buf: Buffer, variant: 'media' | 'avatar'): Promise<ProcessedImage> {
+  try {
+    // Single metadata scan decides the animated vs static path (round 17 plan).
+    const meta = await sharp(buf, { animated: true }).metadata();
+    if (variant === 'avatar') {
+      const { data, info } = await sharp(buf)
+        .rotate() // EXIF auto-orient
+        .resize({ width: 512, height: 512, fit: 'cover', position: 'centre' })
+        .webp({ quality: 85, effort: 4 })
+        .toBuffer({ resolveWithObject: true });
+      return { buffer: data, width: info.width, height: info.height, animated: false };
+    }
+    if ((meta.pages ?? 1) > 1) {
+      // Animated input (animated GIF / animated WebP): the multi-page Sharp
+      // instance makes the WebP output animated automatically (sharp ≥0.33 —
+      // .webp() no longer takes an `animated` key); q78/effort 3 per round-17 spec.
+      const { data, info } = await sharp(buf, { animated: true })
+        .rotate()
+        .resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 78, effort: 3 })
+        .toBuffer({ resolveWithObject: true });
+      return { buffer: data, width: info.width, height: info.height, animated: true };
+    }
+    const { data, info } = await sharp(buf)
+      .rotate()
+      .resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 82, effort: 4 })
+      .toBuffer({ resolveWithObject: true });
+    return { buffer: data, width: info.width, height: info.height, animated: false };
+  } catch {
+    // Corrupt or unsupported image: nothing has been written to disk or DB yet.
+    throw new AppError(ERR.VALIDATION(IMAGE_PROCESS_FAILED));
+  }
+}
+
 export async function uploadMedia(
   tenantId: string,
   input: { buffer: Buffer; mimeType: string; maxBytes?: number }
@@ -116,18 +199,33 @@ export async function uploadMedia(
   const mime = input.mimeType.toLowerCase();
   const ext = MIME_EXT[mime];
   if (!ext) {
-    throw new AppError(ERR.VALIDATION('نوع فایل مجاز نیست. فرمت‌های مجاز: JPG، PNG، WebP، GIF، MP4 و PDF.'));
+    throw new AppError(ERR.VALIDATION('نوع فایل مجاز نیست. فرمت‌های مجاز: JPG، PNG، WebP، GIF، AVIF، TIFF، BMP، HEIC، MP4 و PDF.'));
   }
   if (!magicMatches(mime, input.buffer)) {
     throw new AppError(ERR.VALIDATION('محتوای فایل با نوع اعلام‌شده هم‌خوانی ندارد.'));
   }
 
+  // §60/round17: WebP-only pipeline — originals are never persisted.
+  let stored: Buffer = input.buffer;
+  let storedMime = mime;
+  let storedExt = ext;
+  let width: number | null = null;
+  let height: number | null = null;
+  if (mime.startsWith('image/')) {
+    const processed = await processImageToWebp(input.buffer, 'media');
+    stored = processed.buffer;
+    storedMime = 'image/webp';
+    storedExt = 'webp';
+    width = processed.width;
+    height = processed.height;
+  }
+
   const tenantDir = safeTenantDir(tenantId);
-  const filename = `${newId()}.${ext}`;
+  const filename = `${newId()}.${storedExt}`;
   const storagePath = `${tenantDir}/${filename}`;
   const root = storageRoot();
   await fs.mkdir(path.join(root, tenantDir), { recursive: true });
-  await fs.writeFile(path.join(root, storagePath), input.buffer, { mode: 0o600 });
+  await fs.writeFile(path.join(root, storagePath), stored, { mode: 0o600 });
 
   const db = getDb();
   const id = newId();
@@ -135,14 +233,60 @@ export async function uploadMedia(
     id,
     tenantId,
     filename,
-    mime: input.mimeType.toLowerCase(),
-    sizeBytes: input.buffer.length,
-    width: null, // dimensions intentionally skipped (no extra deps)
-    height: null,
-    checksum: createHash('sha256').update(input.buffer).digest('hex'),
+    mime: storedMime,
+    sizeBytes: stored.length,
+    width,
+    height,
+    checksum: createHash('sha256').update(stored).digest('hex'),
     storagePath,
   });
   await audit({ action: 'media.upload', actorId: tenantId, subjectType: 'media', subjectId: id });
+  const [row] = await db.select().from(media).where(eq(media.id, id)).limit(1);
+  if (!row) throw new AppError(ERR.INTERNAL());
+  return toPublic(row);
+}
+
+/** 5MB input cap for profile photos. */
+export const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Round 17: avatar photo ingest — validates an allowed image/* input, encodes
+ * a deterministic 512×512 WebP square and stores it as an owned media row
+ * (tenantId = the user id). Only the WebP output touches the disk.
+ */
+export async function uploadAvatarMedia(userId: string, input: { buffer: Buffer; mimeType: string }): Promise<MediaPublic> {
+  const mime = input.mimeType.toLowerCase();
+  if (!isAllowedImageMime(mime)) {
+    throw new AppError(ERR.VALIDATION('نوع فایل مجاز نیست. فرمت‌های مجاز: JPG، PNG، WebP، GIF، AVIF، TIFF، BMP و HEIC.'));
+  }
+  if (input.buffer.length === 0) throw new AppError(ERR.VALIDATION('فایل ارسالی خالی است.'));
+  if (input.buffer.length > AVATAR_MAX_BYTES) {
+    throw new AppError(ERR.VALIDATION('حجم تصویر باید حداکثر ۵ مگابایت باشد.'));
+  }
+  if (!magicMatches(mime, input.buffer)) {
+    throw new AppError(ERR.VALIDATION('محتوای فایل با نوع اعلام‌شده هم‌خوانی ندارد.'));
+  }
+  const processed = await processImageToWebp(input.buffer, 'avatar');
+  const tenantDir = safeTenantDir(userId);
+  const filename = `${newId()}.webp`;
+  const storagePath = `${tenantDir}/${filename}`;
+  const root = storageRoot();
+  await fs.mkdir(path.join(root, tenantDir), { recursive: true });
+  await fs.writeFile(path.join(root, storagePath), processed.buffer, { mode: 0o600 });
+  const db = getDb();
+  const id = newId();
+  await db.insert(media).values({
+    id,
+    tenantId: userId,
+    filename,
+    mime: 'image/webp',
+    sizeBytes: processed.buffer.length,
+    width: processed.width,
+    height: processed.height,
+    checksum: createHash('sha256').update(processed.buffer).digest('hex'),
+    storagePath,
+  });
+  await audit({ action: 'media.upload', actorId: userId, subjectType: 'media', subjectId: id, meta: { purpose: 'avatar' } });
   const [row] = await db.select().from(media).where(eq(media.id, id)).limit(1);
   if (!row) throw new AppError(ERR.INTERNAL());
   return toPublic(row);

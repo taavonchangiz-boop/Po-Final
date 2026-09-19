@@ -3,7 +3,7 @@ import { PLATFORM_ICONS } from '../../components/PlatformIcons';
 import type { NavIconName } from '../../components/icons';
 
 /* ------------------------------------------------------------------ */
-/* Shared helpers for the admin panel (Task 16-b).                     */
+/* Shared helpers for the admin panel (Tasks 16-b + 17-b).             */
 /* Label maps harvested from the old single-page Admin.tsx.            */
 /* ------------------------------------------------------------------ */
 
@@ -123,6 +123,10 @@ export interface AdminUserRow {
   role?: string | null;
   status?: string | null;
   createdAt?: string | null;
+  /* Task 17-b avatar fields */
+  avatarKind?: string | null;
+  avatarValue?: string | null;
+  avatarMediaId?: string | null;
 }
 
 export interface AdminPaymentRow {
@@ -218,19 +222,63 @@ export function PlatformIcon({ platform, size = 20 }: { platform: string; size?:
   return <Cmp size={size} />;
 }
 
-/** The 12 admin sections — single source for the layout sidebar and
- *  the home quick-link tiles. `end` = exact index match on NavLink. */
-export const ADMIN_SECTIONS: Array<{ to: string; icon: NavIconName; label: string; short: string; end?: boolean }> = [
-  { to: '/dashboard/admin', icon: 'home', label: 'داشبورد مدیریت', short: 'داشبورد', end: true },
-  { to: '/dashboard/admin/users', icon: 'referrals', label: 'کاربران', short: 'کاربران' },
-  { to: '/dashboard/admin/plans', icon: 'subscription', label: 'اشتراک‌ها (پلن‌ها)', short: 'پلن‌ها' },
-  { to: '/dashboard/admin/payments', icon: 'wallet', label: 'پرداخت‌ها', short: 'پرداخت‌ها' },
-  { to: '/dashboard/admin/gateways', icon: 'woocommerce', label: 'درگاه پرداخت', short: 'درگاه' },
-  { to: '/dashboard/admin/sms', icon: 'notifications', label: 'پیامک', short: 'پیامک' },
-  { to: '/dashboard/admin/email', icon: 'posts', label: 'ایمیل', short: 'ایمیل' },
-  { to: '/dashboard/admin/channels', icon: 'channels', label: 'کانال‌ها', short: 'کانال‌ها' },
-  { to: '/dashboard/admin/bots', icon: 'bots', label: 'ربات‌ها', short: 'ربات‌ها' },
-  { to: '/dashboard/admin/broadcast', icon: 'more', label: 'اطلاع‌رسانی', short: 'اطلاع‌رسانی' },
-  { to: '/dashboard/admin/logs', icon: 'analytics', label: 'گزارش رویداد', short: 'رویدادها' },
-  { to: '/dashboard/admin/settings', icon: 'settings', label: 'تنظیمات عمومی', short: 'تنظیمات' },
+/* ------------------------------------------------------------------ */
+/* Admin navigation — grouped sections (Task 17-b). Single source for  */
+/* the layout sidebar, the mobile drawer and the home quick tiles.     */
+/* `end` = exact index match on NavLink.                               */
+/* ------------------------------------------------------------------ */
+
+export interface AdminSectionItem {
+  to: string;
+  icon: NavIconName;
+  label: string;
+  short: string;
+  end?: boolean;
+}
+
+export interface AdminSectionGroup {
+  group: string;
+  items: AdminSectionItem[];
+}
+
+export const ADMIN_SECTIONS: AdminSectionGroup[] = [
+  {
+    group: 'مدیریت',
+    items: [
+      { to: '/dashboard/admin', icon: 'home', label: 'داشبورد مدیریت', short: 'داشبورد', end: true },
+      { to: '/dashboard/admin/users', icon: 'referrals', label: 'کاربران', short: 'کاربران' },
+      { to: '/dashboard/admin/channels', icon: 'channels', label: 'کانال‌ها', short: 'کانال‌ها' },
+      { to: '/dashboard/admin/bots', icon: 'bots', label: 'ربات‌ها', short: 'ربات‌ها' },
+    ],
+  },
+  {
+    group: 'مالی',
+    items: [
+      { to: '/dashboard/admin/plans', icon: 'subscription', label: 'اشتراک‌ها (پلن‌ها)', short: 'پلن‌ها' },
+      { to: '/dashboard/admin/payments', icon: 'wallet', label: 'پرداخت‌ها', short: 'پرداخت‌ها' },
+      { to: '/dashboard/admin/gateways', icon: 'woocommerce', label: 'درگاه پرداخت', short: 'درگاه' },
+    ],
+  },
+  {
+    group: 'ارتباطات',
+    items: [
+      { to: '/dashboard/admin/sms', icon: 'notifications', label: 'پیامک', short: 'پیامک' },
+      { to: '/dashboard/admin/email', icon: 'posts', label: 'ایمیل', short: 'ایمیل' },
+      { to: '/dashboard/admin/broadcast', icon: 'more', label: 'اطلاع‌رسانی', short: 'اطلاع‌رسانی' },
+    ],
+  },
+  {
+    group: 'تنظیمات',
+    items: [
+      { to: '/dashboard/admin/settings', icon: 'settings', label: 'مرکز تنظیمات', short: 'تنظیمات', end: true },
+      { to: '/dashboard/admin/settings/general', icon: 'home', label: 'تنظیمات عمومی', short: 'عمومی' },
+      { to: '/dashboard/admin/settings/ai', icon: 'ai', label: 'هوش مصنوعی', short: 'هوش مصنوعی' },
+      { to: '/dashboard/admin/settings/referral', icon: 'referrals', label: 'زیرمجموعه‌گیری', short: 'زیرمجموعه' },
+      { to: '/dashboard/admin/settings/security', icon: 'admin', label: 'امنیت', short: 'امنیت' },
+      { to: '/dashboard/admin/logs', icon: 'analytics', label: 'گزارش رویداد', short: 'رویدادها' },
+    ],
+  },
 ];
+
+/** Flat view of all sections (quick tiles, lookups). */
+export const ADMIN_SECTIONS_FLAT: AdminSectionItem[] = ADMIN_SECTIONS.flatMap((g) => g.items);

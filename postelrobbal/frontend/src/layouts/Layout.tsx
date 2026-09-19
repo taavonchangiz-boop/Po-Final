@@ -9,6 +9,8 @@ import type { NotificationDto } from '../lib/api';
 import { Logo } from '../components/Logo';
 import { NavIcon, type NavIconName } from '../components/icons';
 import { BaleIcon, RubikaIcon, TelegramIcon } from '../components/PlatformIcons';
+import { Avatar } from '../components/Avatar';
+import { avatarPhotoUrl } from '../lib/api';
 
 /* ------------------------------------------------------------------ */
 /* Landing shell — floating glass header + footer (Task 14-a)          */
@@ -326,6 +328,10 @@ export function DashboardLayout() {
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const sheetItems = visibleItems.filter((item) => !BOTTOM_NAV_ROUTES.includes(item.to));
 
+  /* Task 17-b: standard character / photo avatar replaces the initials box. */
+  const fullName = `${me.user.firstName} ${me.user.lastName}`.trim();
+  const photoUrl = me.user.avatarKind === 'photo' ? avatarPhotoUrl(me.user.id, me.user.avatarMediaId) : undefined;
+
   // Bottom-nav active slot: one of the 4 pinned routes, otherwise the «بیشتر» slot.
   const activeMainIdx = mainItems.findIndex((item) => navMatch(location.pathname, item.to));
   const moreActive = activeMainIdx === -1;
@@ -399,7 +405,7 @@ export function DashboardLayout() {
             >
               خروج
             </button>
-            {/* Mobile user avatar (≤768px): opens the compact user menu */}
+            {/* User avatar button (topbar): opens the compact user menu */}
             <div style={{ position: 'relative' }}>
               <button
                 type="button"
@@ -408,13 +414,28 @@ export function DashboardLayout() {
                 aria-label="منوی کاربر"
                 aria-expanded={userOpen}
               >
-                {((me.user.firstName?.[0] ?? '') + (me.user.lastName?.[0] ?? '')).trim() || 'پ'}
+                <Avatar
+                  kind={me.user.avatarKind}
+                  value={me.user.avatarValue}
+                  photoUrl={photoUrl}
+                  name={fullName}
+                  size={36}
+                />
               </button>
               {userOpen && (
                 <div className="dash-userpop" role="menu" aria-label="منوی کاربر">
                   <div className="dash-userpop__id">
-                    <strong>{me.user.firstName} {me.user.lastName}</strong>
-                    <span dir="ltr">{me.user.email}</span>
+                    <Avatar
+                      kind={me.user.avatarKind}
+                      value={me.user.avatarValue}
+                      photoUrl={photoUrl}
+                      name={fullName}
+                      size={44}
+                    />
+                    <div>
+                      <strong>{me.user.firstName} {me.user.lastName}</strong>
+                      <span dir="ltr">{me.user.email}</span>
+                    </div>
                   </div>
                   <Link
                     to="/dashboard/settings"

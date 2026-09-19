@@ -1,170 +1,100 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Button, Card, EmptyState, Field, Input, PageLoading, Textarea } from '../../components/ui';
-import { useToast } from '../../lib/toast';
-import { errText } from './shared';
+import { NavIcon, type NavIconName } from '../../components/icons';
+import { faNumber } from '../../lib/format';
+import { strField, boolField } from './shared';
 
 /* ------------------------------------------------------------------ */
-/* تنظیمات عمومی — generic JSON key/value editor. Payment, SMS and     */
-/* email keys are excluded client-side: they now live in their own     */
-/* dedicated admin sections (Task 16-b).                               */
+/* مرکز تنظیمات — hub (Task 17-b). A responsive card grid, one card    */
+/* per settings area. The old generic JSON key/value editor is gone;   */
+/* each area lives on its own dedicated form page.                     */
 /* ------------------------------------------------------------------ */
 
-interface SettingRow {
-  key: string;
-  text: string;
+interface SettingsCardDef {
+  to: string;
+  icon: NavIconName;
+  title: string;
+  desc: string;
+  /** Key into the hints map for a cheap current-state line. */
+  hintKey?: 'general' | 'ai' | 'referral' | 'security';
 }
 
-/** Payment/SMS/Email settings moved to dedicated sections. */
-const MANAGED_EXACT = new Set([
-  'paymentOnlineEnabled',
-  'paymentCardToCardEnabled',
-  'paymentProvider',
-  'paymentGateways',
-  'cardToCardCards',
-]);
-
-const MANAGED_PREFIXES = ['sms', 'email', 'smtp'];
-
-function isManagedKey(key: string): boolean {
-  if (MANAGED_EXACT.has(key)) return true;
-  return MANAGED_PREFIXES.some((p) => key.startsWith(p));
-}
-
-const SETTINGS_KEY_FA: Record<string, string> = {
-  referral: 'تنظیمات زیرمجموعه‌گیری',
-  gold: 'تنظیمات ربات نرخ طلا',
-  ai: 'تنظیمات هوش مصنوعی',
-  security: 'تنظیمات امنیتی',
-  plan: 'تنظیمات پلن‌ها',
-};
+const CARDS: SettingsCardDef[] = [
+  { to: '/dashboard/admin/settings/general', icon: 'home', title: 'عمومی', desc: 'نام و شعار سایت، ایمیل و تلفن پشتیبانی، قوانین و حالت تعمیر', hintKey: 'general' },
+  { to: '/dashboard/admin/settings/ai', icon: 'ai', title: 'هوش مصنوعی', desc: 'انتخاب سرویس‌دهندهٔ پیش‌فرض مدل‌های زبانی', hintKey: 'ai' },
+  { to: '/dashboard/admin/settings/referral', icon: 'referrals', title: 'زیرمجموعه‌گیری', desc: 'امتیاز پاداش معرفی کاربر جدید', hintKey: 'referral' },
+  { to: '/dashboard/admin/settings/security', icon: 'admin', title: 'امنیت', desc: 'ثبت‌نام کاربران جدید و کپچای امنیتی ورود', hintKey: 'security' },
+  { to: '/dashboard/admin/gateways', icon: 'woocommerce', title: 'درگاه پرداخت', desc: 'درگاه آنلاین، کارت به کارت و اعتبارنامهٔ هر درگاه' },
+  { to: '/dashboard/admin/sms', icon: 'notifications', title: 'پیامک', desc: 'سرویس‌دهندهٔ پیامک و اعتبارنامهٔ ارسال' },
+  { to: '/dashboard/admin/email', icon: 'posts', title: 'ایمیل', desc: 'سرور SMTP و ایمیل آزمایشی' },
+];
 
 export default function AdminSettings() {
-  const toast = useToast();
-
-  const [rows, setRows] = useState<SettingRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [newKey, setNewKey] = useState('');
-  const [errorKey, setErrorKey] = useState<string | null>(null);
-
-  const loadSettings = async () => {
-    setLoading(true);
-    try {
-      const d = await api.get<Record<string, unknown>>('/api/v1/admin/settings');
-      setRows(
-        Object.entries(d)
-          .filter(([k]) => !isManagedKey(k))
-          .map(([k, v]) => ({ key: k, text: JSON.stringify(v ?? null, null, 2) }))
-      );
-    } catch (err) {
-      toast.error(errText(err, 'دریافت تنظیمات ناموفق بود.'));
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Cheap current-state hints (best-effort; cards render regardless).
+  const [hints, setHints] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    void loadSettings();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const addKey = () => {
-    const key = newKey.trim();
-    if (!key) {
-      toast.error('نام کلید را وارد کنید.');
-      return;
-    }
-    if (isManagedKey(key)) {
-      toast.error('این کلید در بخش اختصاصی خودش (پرداخت/پیامک/ایمیل) مدیریت می‌شود.');
-      return;
-    }
-    if (rows.some((r) => r.key === key)) {
-      toast.error('این کلید از قبل وجود دارد.');
-      return;
-    }
-    setRows((prev) => [...prev, { key, text: '{}' }]);
-    setNewKey('');
-  };
-
-  const saveAll = async () => {
-    const payload: Record<string, unknown> = {};
-    for (const row of rows) {
-      try {
-        payload[row.key] = JSON.parse(row.text) as unknown;
-      } catch {
-        setErrorKey(row.key);
-        toast.error(`متن JSON کلید «${row.key}» معتبر نیست.`);
-        return;
+    let alive = true;
+    void (async () => {
+      const next: Record<string, string> = {};
+      const results = await Promise.allSettled([
+        api.get<Record<string, unknown>>('/api/v1/admin/settings/general'),
+        api.get<Record<string, unknown>>('/api/v1/admin/settings/ai'),
+        api.get<{ registerRewardPoints?: number }>('/api/v1/admin/settings/referral'),
+        api.get<Record<string, unknown>>('/api/v1/admin/settings/security'),
+      ]);
+      if (!alive) return;
+      const [general, ai, referral, security] = results;
+      if (general.status === 'fulfilled') {
+        const name = strField(general.value.siteNameFa).trim();
+        const maint = boolField(general.value.maintenanceEnabled);
+        if (maint) next.general = 'حالت تعمیر و نگهداری فعال است';
+        else if (name) next.general = `نام سایت: ${name}`;
       }
-    }
-    setSaving(true);
-    try {
-      await api.put('/api/v1/admin/settings', payload);
-      toast.success('تنظیمات عمومی ذخیره شد.');
-      setErrorKey(null);
-      await loadSettings();
-    } catch (err) {
-      toast.error(errText(err, 'ذخیرهٔ تنظیمات ناموفق بود.'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (loading) return <PageLoading />;
+      if (ai.status === 'fulfilled') {
+        const p = strField(ai.value.default_provider);
+        if (p) next.ai = `سرویس‌دهندهٔ فعلی: ${p}`;
+      }
+      if (referral.status === 'fulfilled' && Number.isFinite(Number(referral.value.registerRewardPoints))) {
+        next.referral = `امتیاز معرفی: ${faNumber(Number(referral.value.registerRewardPoints))}`;
+      }
+      if (security.status === 'fulfilled') {
+        const flags: string[] = [];
+        if (security.value.registrationEnabled === false) flags.push('ثبت‌نام خاموش');
+        if (security.value.captchaEnabled === false) flags.push('کپچا خاموش');
+        if (flags.length) next.security = flags.join(' · ');
+      }
+      setHints(next);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <>
       <div className="adm-page-head">
-        <h2>تنظیمات عمومی</h2>
-        <p>کلیدهای JSON سامانه — تنظیمات پرداخت، پیامک و ایمیل در بخش‌های اختصاصی خودشان است</p>
+        <h2>مرکز تنظیمات</h2>
+        <p>همهٔ تنظیمات سامانه به تفکیک بخش — هر بخش صفحهٔ اختصاصی خودش را دارد</p>
       </div>
 
-      <div className="adm-note adm-note--danger" role="alert">
-        <span aria-hidden="true">⚠️</span>
-        <span>
-          هشدار: کلیدهای ناشناخته ممکن است رفتار امکانات سامانه را تغییر دهند. فقط مقدار کلیدی را ویرایش کنید که ساختارش را می‌دانید؛ پس از ذخیره، تغییرات برای همهٔ کاربران اعمال می‌شود.
-        </span>
+      <div className="adm-settings-grid">
+        {CARDS.map((c) => {
+          const hint = c.hintKey ? hints[c.hintKey] : undefined;
+          return (
+            <Link key={c.to} to={c.to} className="adm-settings-card">
+              <span className="adm-settings-card__icon" aria-hidden="true">
+                <NavIcon name={c.icon} size={20} />
+              </span>
+              <strong>{c.title}</strong>
+              <p>{c.desc}</p>
+              {hint && <span className="adm-settings-card__hint">{hint}</span>}
+              <span className="adm-settings-card__go">مشاهده و ویرایش ‹</span>
+            </Link>
+          );
+        })}
       </div>
-
-      <Card className="adm-savebar">
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <Field label="کلید جدید" hint="مثلاً referral یا security">
-            <Input dir="ltr" style={{ textAlign: 'left' }} value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="مثلاً referral" />
-          </Field>
-        </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Button variant="ghost" onClick={addKey}>افزودن کلید</Button>
-          <Button onClick={() => void saveAll()} loading={saving}>ذخیرهٔ همهٔ تغییرات</Button>
-        </div>
-      </Card>
-
-      {rows.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon="🧩"
-            title="کلید تنظیماتی برای نمایش نیست"
-            description="با «افزودن کلید» یک کلید جدید بسازید یا مقدار پیش‌فرض پس از اولین استفاده سامانه اینجا ظاهر می‌شود."
-          />
-        </Card>
-      ) : (
-        rows.map((row) => (
-          <Card key={row.key} className={`adm-keyrow${errorKey === row.key ? ' is-error' : ''}`}>
-            <div className="adm-card-head">
-              <strong>{SETTINGS_KEY_FA[row.key] ?? `تنظیمات (${row.key})`}</strong>
-              <code dir="ltr" className="adm-keycode">{row.key}</code>
-            </div>
-            <Textarea
-              dir="ltr"
-              rows={6}
-              style={{ fontFamily: 'monospace', fontSize: 12.5, textAlign: 'left' }}
-              value={row.text}
-              onChange={(e) => setRows((prev) => prev.map((r) => (r.key === row.key ? { ...r, text: e.target.value } : r)))}
-              aria-label={`مقدار JSON کلید ${row.key}`}
-            />
-          </Card>
-        ))
-      )}
     </>
   );
 }

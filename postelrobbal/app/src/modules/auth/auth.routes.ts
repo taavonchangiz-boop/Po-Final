@@ -16,10 +16,13 @@ import { getDb } from '../../db/client.js';
 import { users, subscriptions, plans } from '../../db/schema.js';
 import { desc, eq } from 'drizzle-orm';
 import { parseWith } from '../../core/validation.js';
+import { getSecuritySettings } from '../admin/system-settings.service.js';
 
 const captchaFields = {
-  captchaId: z.string().min(16).max(64),
-  captchaText: z.string().min(3).max(10),
+  // Round 17: optional at the schema level — presence is enforced manually only
+  // when the 'security' setting captchaEnabled is true (Persian error below).
+  captchaId: z.string().min(16).max(64).optional(),
+  captchaText: z.string().min(3).max(10).optional(),
 };
 
 const registerSchema = z.object({
@@ -43,6 +46,8 @@ const loginSchema = z.object({
 });
 
 const CAPTCHA_FAILED = 'کد امنیتی نادرست است یا منقضی شده؛ کد جدید را وارد کنید.';
+const CAPTCHA_REQUIRED = 'کد امنیتی الزامی است.';
+const REGISTRATION_DISABLED = 'ثبت‌نام موقتاً غیرفعال است. لطفاً بعداً تلاش کنید.';
 
 const resetRequestSchema = z.object({ email: z.string().email() });
 const resetConfirmSchema = z.object({ token: z.string().min(10).max(200), password: z.string().min(8).max(128) });
@@ -59,6 +64,7 @@ function authUser(req: { user?: SessionUser }): SessionUser {
 
 function publicUser(u: {
   id: string; firstName: string; lastName: string; email: string; businessName: string; role: string;
+  avatarKind?: string | null; avatarValue?: string | null; avatarMediaId?: string | null;
 }) {
   return {
     id: u.id,
@@ -67,6 +73,11 @@ function publicUser(u: {
     email: u.email,
     businessName: u.businessName,
     role: u.role,
+    // Round 17: 'character' renders AVATAR_CHARACTERS[u.avatarValue] as SVG;
+    // 'photo' serves GET /users/:id/avatar (avatarMediaId → 512×512 WebP).
+    avatarKind: u.avatarKind ?? 'character',
+    avatarValue: u.avatarValue ?? '',
+    avatarMediaId: u.avatarMediaId ?? null,
   };
 }
 
@@ -79,9 +90,15 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/auth/register', { config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (req, reply) => {
     const input = parse(registerSchema, req.body);
+    // Round 17: registration kill-switch — checked BEFORE captcha and any DB write.
+    const security = await getSecuritySettings();
+    if (!security.registrationEnabled) throw new AppError(ERR.VALIDATION(REGISTRATION_DISABLED));
     // Anti-bot gate BEFORE any DB work (item 15). One shot per code.
-    const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText);
-    if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+    if (security.captchaEnabled) {
+      if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
+      const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText);
+      if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+    }
     const { userId } = await registerUser(input, { ip: req.ip, userAgent: req.headers['user-agent'] });
     // Auto-login on successful registration (session rotation included)
     const session = await createSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
@@ -100,8 +117,14 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const input = parse(loginSchema, req.body);
     // Anti-bot gate BEFORE credential check — identical error whether the
     // captcha or the credentials failed, so no account state leaks (item 15).
-    const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText);
-    if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+    // Round 17: one settings read per request; skipped entirely when admin
+    // disables captcha. When enabled, round-15 behavior is unchanged.
+    const security = await getSecuritySettings();
+    if (security.captchaEnabled) {
+      if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
+      const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText);
+      if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+    }
     const user = await authenticate(input.identifier, input.password);
     // Session rotation on login (§40): revoke previous sessions
     await revokeAllUserSessions(user.id).catch(() => undefined);

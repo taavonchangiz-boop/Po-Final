@@ -129,7 +129,7 @@ export default function AdminChannels() {
         ) : (
           <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table adm-table--cards">
                 <thead>
                   <tr>
                     <th>پلتفرم</th>
@@ -144,15 +144,15 @@ export default function AdminChannels() {
                 <tbody>
                   {items.map((ch) => (
                     <tr key={ch.id}>
-                      <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><PlatformIcon platform={ch.platform} size={20} />{PLATFORM_FA[ch.platform] ?? ch.platform}</span></td>
-                      <td style={{ fontWeight: 600 }}>{ch.title || '—'}</td>
-                      <td dir="ltr" style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{ch.channelRef || '—'}</td>
-                      <td><StatusBadge state={ch.status ?? ''} labels={CHANNEL_STATUS_FA} /></td>
-                      <td>
+                      <td data-label="پلتفرم"><span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><PlatformIcon platform={ch.platform} size={20} />{PLATFORM_FA[ch.platform] ?? ch.platform}</span></td>
+                      <td data-label="عنوان" style={{ fontWeight: 600 }}>{ch.title || '—'}</td>
+                      <td data-label="رفرنس" dir="ltr" style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{ch.channelRef || '—'}</td>
+                      <td data-label="وضعیت"><StatusBadge state={ch.status ?? ''} labels={CHANNEL_STATUS_FA} /></td>
+                      <td data-label="مالک">
                         <div style={{ fontSize: 12.5, fontWeight: 600 }}>{ch.ownerName || '—'}</div>
                         {ch.ownerEmail && <div dir="ltr" style={{ textAlign: 'right', fontSize: 11.5, color: 'var(--text-2)' }}>{ch.ownerEmail}</div>}
                       </td>
-                      <td>{faDate(ch.createdAt)}</td>
+                      <td data-label="تاریخ اتصال">{faDate(ch.createdAt)}</td>
                       <td>
                         <Button size="sm" variant="ghost" onClick={() => openRelease(ch.platform, ch.channelRef)}>
                           آزادسازی

@@ -354,6 +354,57 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   }
 }
 
+/* ---------- Task 17-b: standard avatars (.pavatar) ---------- */
+/* Rendered by components/Avatar.tsx: flat SVG character, photo img, or
+   letter fallback — always a circle, sized via width/height props. */
+.pavatar {
+  border-radius: 999px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-grad);
+  color: #fff;
+  user-select: none;
+}
+.pavatar svg { display: block; }
+.pavatar__img { object-fit: cover; }
+.pavatar--letter { font-weight: 800; line-height: 1; }
+
+/* Character picker (user dashboard → settings → تصویر پروفایل) */
+.pavatar-picker {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(min(92px, 100%), 1fr));
+  margin-bottom: 16px;
+}
+.pavatar-picker__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 6px;
+  min-height: 44px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+.pavatar-picker__tile:hover { border-color: var(--brand); color: var(--text); }
+.pavatar-picker__tile.is-active {
+  border-color: var(--brand);
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
+}
+.pavatar-picker__tile:disabled { opacity: 0.55; cursor: wait; }
+
 /* ---------- reduced motion (Task 14-a) ---------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

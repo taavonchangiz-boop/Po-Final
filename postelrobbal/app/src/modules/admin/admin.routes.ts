@@ -4,6 +4,7 @@ import { AppError, ERR } from '../../core/errors.js';
 import { parseWith } from '../../core/validation.js';
 import { Permission } from '../../security/permissions.js';
 import { audit } from '../../core/audit.js';
+import { AI_PROVIDER_IDS } from '../../providers/ai/ai-providers.js';
 import {
   getOverview,
   listUsers,
@@ -39,6 +40,14 @@ import {
   getEmailSettings,
   putEmailSettings,
   sendTestEmail,
+  getGeneralSettings,
+  putGeneralSettings,
+  getAiSettings,
+  putAiSettings,
+  getReferralSettings,
+  putReferralSettings,
+  getSecuritySettings,
+  putSecuritySettings,
 } from './system-settings.service.js';
 
 function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
@@ -191,6 +200,35 @@ const emailPutSchema = z
 const emailTestSchema = z.object({
   to: z.string().min(3).max(190).email(),
 });
+
+// ---- general / ai / referral / security settings (round 17, form-shaped) ----
+const generalPutSchema = z
+  .object({
+    siteNameFa: z.string().min(1).max(60).optional(),
+    siteTaglineFa: z.string().max(120).optional(),
+    supportEmail: z
+      .string()
+      .max(190)
+      .refine((v) => v === '' || v.includes('@'), { message: 'ایمیل معتبر نیست.' })
+      .optional(),
+    supportPhone: z.string().max(20).optional(),
+    termsNoteFa: z.string().max(300).optional(),
+    maintenanceEnabled: z.boolean().optional(),
+    maintenanceMessageFa: z.string().max(300).optional(),
+  })
+  .strict();
+const aiPutSchema = z
+  .object({ default_provider: z.enum(AI_PROVIDER_IDS).optional() })
+  .strict();
+const referralPutSchema = z
+  .object({ registerRewardPoints: z.number().int().min(0).max(100000).optional() })
+  .strict();
+const securityPutSchema = z
+  .object({
+    registrationEnabled: z.boolean().optional(),
+    captchaEnabled: z.boolean().optional(),
+  })
+  .strict();
 
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   // Every admin route requires admin.access; sensitive groups declare a finer permission.
@@ -510,6 +548,66 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const me = auth(req);
     const input = parse(emailTestSchema, req.body);
     const data = await sendTestEmail(me.id, input.to);
+    return { success: true, data };
+  });
+
+  // ---- general settings (round 17): PUT is a partial patch → full snapshot ----
+  app.get('/admin/settings/general', settingsManage, async () => {
+    const data = await getGeneralSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/general', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(generalPutSchema, req.body);
+    const keys = await putGeneralSettings(input);
+    await audit({ action: 'admin.settings_updated', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { keys } });
+    const data = await getGeneralSettings();
+    return { success: true, data };
+  });
+
+  // ---- ai settings (round 17): default provider ----
+  app.get('/admin/settings/ai', settingsManage, async () => {
+    const data = await getAiSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/ai', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(aiPutSchema, req.body);
+    const keys = await putAiSettings(input);
+    await audit({ action: 'admin.settings_updated', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { keys } });
+    const data = await getAiSettings();
+    return { success: true, data };
+  });
+
+  // ---- referral settings (round 17): register reward points ----
+  app.get('/admin/settings/referral', settingsManage, async () => {
+    const data = await getReferralSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/referral', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(referralPutSchema, req.body);
+    const keys = await putReferralSettings(input);
+    await audit({ action: 'admin.settings_updated', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { keys } });
+    const data = await getReferralSettings();
+    return { success: true, data };
+  });
+
+  // ---- security settings (round 17): registration + captcha toggles ----
+  app.get('/admin/settings/security', settingsManage, async () => {
+    const data = await getSecuritySettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/security', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(securityPutSchema, req.body);
+    const keys = await putSecuritySettings(input);
+    await audit({ action: 'admin.settings_updated', actorId: me.id, actorRole: me.role, ip: req.ip, meta: { keys } });
+    const data = await getSecuritySettings();
     return { success: true, data };
   });
 

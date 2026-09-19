@@ -39,6 +39,10 @@ const AdminBots = lazy(() => import('./pages/admin/AdminBots'));
 const AdminBroadcast = lazy(() => import('./pages/admin/AdminBroadcast'));
 const AdminLogs = lazy(() => import('./pages/admin/AdminLogs'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
+const AdminSettingsGeneral = lazy(() => import('./pages/admin/AdminSettingsGeneral'));
+const AdminSettingsAi = lazy(() => import('./pages/admin/AdminSettingsAi'));
+const AdminSettingsReferral = lazy(() => import('./pages/admin/AdminSettingsReferral'));
+const AdminSettingsSecurity = lazy(() => import('./pages/admin/AdminSettingsSecurity'));
 const PaymentResult = lazy(() => import('./pages/PaymentResult'));
 
 export function App() {
@@ -72,20 +76,27 @@ export function App() {
           <Route path="settings" element={<Settings />} />
           <Route path="support" element={<Support />} />
           <Route path="help" element={<Help />} />
-          <Route path="admin" element={<AdminLayout />}>
-            <Route index element={<AdminHome />} />
-            <Route path="users" element={<AdminUsers />} />
-            <Route path="plans" element={<AdminPlans />} />
-            <Route path="payments" element={<AdminPayments />} />
-            <Route path="gateways" element={<AdminGateways />} />
-            <Route path="sms" element={<AdminSms />} />
-            <Route path="email" element={<AdminEmail />} />
-            <Route path="channels" element={<AdminChannels />} />
-            <Route path="bots" element={<AdminBots />} />
-            <Route path="broadcast" element={<AdminBroadcast />} />
-            <Route path="logs" element={<AdminLogs />} />
-            <Route path="settings" element={<AdminSettings />} />
-          </Route>
+        </Route>
+        {/* Admin shell is a COMPLETE standalone layout (Task 17-b): mounted
+            top-level so the user-dashboard chrome never renders around it.
+            URLs unchanged (/dashboard/admin/…) — bookmarks keep working. */}
+        <Route path="/dashboard/admin" element={<AdminLayout />}>
+          <Route index element={<AdminHome />} />
+          <Route path="users" element={<AdminUsers />} />
+          <Route path="plans" element={<AdminPlans />} />
+          <Route path="payments" element={<AdminPayments />} />
+          <Route path="gateways" element={<AdminGateways />} />
+          <Route path="sms" element={<AdminSms />} />
+          <Route path="email" element={<AdminEmail />} />
+          <Route path="channels" element={<AdminChannels />} />
+          <Route path="bots" element={<AdminBots />} />
+          <Route path="broadcast" element={<AdminBroadcast />} />
+          <Route path="logs" element={<AdminLogs />} />
+          <Route path="settings" element={<AdminSettings />} />
+          <Route path="settings/general" element={<AdminSettingsGeneral />} />
+          <Route path="settings/ai" element={<AdminSettingsAi />} />
+          <Route path="settings/referral" element={<AdminSettingsReferral />} />
+          <Route path="settings/security" element={<AdminSettingsSecurity />} />
         </Route>
       </Routes>
     </Suspense>

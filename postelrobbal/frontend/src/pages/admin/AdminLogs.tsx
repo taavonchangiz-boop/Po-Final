@@ -76,7 +76,7 @@ export default function AdminLogs() {
         ) : (
           <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table adm-table--cards">
                 <thead>
                   <tr>
                     <th>زمان</th>
@@ -88,20 +88,20 @@ export default function AdminLogs() {
                 <tbody>
                   {items.map((a) => (
                     <tr key={a.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{faDateTime(a.createdAt)}</td>
-                      <td style={{ fontWeight: 600 }}>
+                      <td data-label="زمان" style={{ whiteSpace: 'nowrap' }}>{faDateTime(a.createdAt)}</td>
+                      <td data-label="اقدام" style={{ fontWeight: 600 }}>
                         {AUDIT_ACTION_FA[a.action ?? ''] ?? a.action}
                         {a.action && !AUDIT_ACTION_FA[a.action] && (
                           <code dir="ltr" style={{ display: 'block', fontSize: 11, color: 'var(--text-2)' }}>{a.action}</code>
                         )}
                       </td>
-                      <td>
+                      <td data-label="کنشگر">
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                           {a.actorRole && <Badge tone={a.actorRole === 'USER' ? 'muted' : 'brand'}>{ROLE_FA[a.actorRole] ?? a.actorRole}</Badge>}
                           <span dir="ltr" style={{ fontFamily: 'monospace', fontSize: 12 }}>{a.actorId ? a.actorId.slice(0, 10) : 'سیستم'}</span>
                         </div>
                       </td>
-                      <td style={{ fontSize: 12.5 }}>
+                      <td data-label="موضوع" style={{ fontSize: 12.5 }}>
                         {a.subjectType ? `${a.subjectType} ${a.subjectId ? `· ${a.subjectId.slice(0, 10)}` : ''}` : '—'}
                       </td>
                     </tr>

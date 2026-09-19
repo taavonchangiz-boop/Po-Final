@@ -1,11 +1,12 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { referrals, referralRewards, users } from '../../db/schema.js';
+import { referrals, referralRewards, systemSettings, users } from '../../db/schema.js';
 import { newId } from '../../core/ids.js';
 import { emitEvent } from '../../core/events.js';
 import { referralCodeFor } from '../auth/auth.service.js';
 import { pointCreditTx, getPointsBalance } from '../wallet/wallet.service.js';
 
+/** Fallback register reward — overridden by the admin setting key 'referral'. */
 export const REGISTER_REWARD_POINTS = 100;
 
 export interface ReferralSummary {
@@ -66,7 +67,7 @@ export async function myReferral(tenantId: string): Promise<ReferralSummary> {
 }
 
 /**
- * Registration reward: 100 points per REGISTERED referral, exactly-once via
+ * Registration reward: points per REGISTERED referral, exactly-once via
  * uq_referral_rewards(referral_id, reward_kind). Never flips the referral
  * state — REWARDED is reserved for the first-purchase reward.
  */
@@ -85,6 +86,23 @@ export async function awardRegisterReward(referrerTenantId: string): Promise<num
   return awarded;
 }
 
+/**
+ * Round 17: admin-configurable register reward (system_settings key 'referral',
+ * field registerRewardPoints, 0..100000). Coerced safely — anything else falls
+ * back to the REGISTER_REWARD_POINTS default.
+ */
+async function resolveRegisterRewardPoints(): Promise<number> {
+  const db = getDb();
+  const [row] = await db
+    .select({ valueJson: systemSettings.valueJson })
+    .from(systemSettings)
+    .where(eq(systemSettings.settingKey, 'referral'))
+    .limit(1);
+  const raw: unknown = row?.valueJson?.['registerRewardPoints'];
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 && raw <= 100000) return raw;
+  return REGISTER_REWARD_POINTS;
+}
+
 /** Award for one specific referral row; idempotent (unique key + pre-check). */
 export async function awardRegisterRewardForReferral(referralId: string, referrerTenantId: string): Promise<number> {
   const db = getDb();
@@ -95,15 +113,16 @@ export async function awardRegisterRewardForReferral(referralId: string, referre
     .limit(1);
   if (existing) return 0;
 
+  const points = await resolveRegisterRewardPoints();
   try {
     await db.transaction(async (tx) => {
       await tx.insert(referralRewards).values({
         id: newId(),
         referralId,
         rewardKind: 'REGISTER',
-        amount: REGISTER_REWARD_POINTS,
+        amount: points,
       });
-      await pointCreditTx(tx, referrerTenantId, REGISTER_REWARD_POINTS, { type: 'referral_register', id: referralId }, 'پاداش معرفی کاربر جدید');
+      await pointCreditTx(tx, referrerTenantId, points, { type: 'referral_register', id: referralId }, 'پاداش معرفی کاربر جدید');
     });
   } catch (err) {
     const e = err as { code?: string; message?: string };
@@ -116,7 +135,7 @@ export async function awardRegisterRewardForReferral(referralId: string, referre
     tenantId: referrerTenantId,
     subjectType: 'referral',
     subjectId: referralId,
-    props: { rewardKind: 'REGISTER', points: REGISTER_REWARD_POINTS },
+    props: { rewardKind: 'REGISTER', points },
   });
-  return REGISTER_REWARD_POINTS;
+  return points;
 }

@@ -126,7 +126,7 @@ export default function AdminPayments() {
         ) : (
           <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table adm-table--cards">
                 <thead>
                   <tr>
                     <th>مبلغ</th>
@@ -140,11 +140,11 @@ export default function AdminPayments() {
                 <tbody>
                   {items.map((p) => (
                     <tr key={p.id}>
-                      <td style={{ fontWeight: 700 }}>{faMoney(p.amountRial)}</td>
-                      <td><StatusBadge state={p.state ?? ''} labels={PAYMENT_STATE_FA} /></td>
-                      <td>{purposeFa(p.purpose)}</td>
-                      <td dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{p.userEmail || (p.tenantId ? p.tenantId.slice(0, 10) : '—')}</td>
-                      <td>{faDateTime(p.createdAt)}</td>
+                      <td data-label="مبلغ" style={{ fontWeight: 700 }}>{faMoney(p.amountRial)}</td>
+                      <td data-label="وضعیت"><StatusBadge state={p.state ?? ''} labels={PAYMENT_STATE_FA} /></td>
+                      <td data-label="بابت">{purposeFa(p.purpose)}</td>
+                      <td data-label="کاربر" dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{p.userEmail || (p.tenantId ? p.tenantId.slice(0, 10) : '—')}</td>
+                      <td data-label="زمان">{faDateTime(p.createdAt)}</td>
                       <td>
                         <div className="adm-table-actions">
                           {(p.state === 'CREATED' || p.state === 'PENDING_REVIEW') && (

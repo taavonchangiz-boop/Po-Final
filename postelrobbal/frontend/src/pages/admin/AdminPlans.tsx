@@ -231,7 +231,7 @@ export default function AdminPlans() {
           />
         ) : (
           <div className="table-wrap">
-            <table className="table">
+            <table className="table adm-table--cards">
               <thead>
                 <tr>
                   <th>کد</th>
@@ -245,11 +245,11 @@ export default function AdminPlans() {
               <tbody>
                 {plans.map((p) => (
                   <tr key={p.id}>
-                    <td dir="ltr" style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12.5 }}>{p.code}</td>
-                    <td style={{ fontWeight: 600 }}>{p.nameFa}</td>
-                    <td style={{ fontWeight: 700 }}>{faMoney(p.priceRial)}</td>
-                    <td>{faDigits(p.periodDays)} روز</td>
-                    <td>
+                    <td data-label="کد" dir="ltr" style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12.5 }}>{p.code}</td>
+                    <td data-label="نام" style={{ fontWeight: 600 }}>{p.nameFa}</td>
+                    <td data-label="قیمت" style={{ fontWeight: 700 }}>{faMoney(p.priceRial)}</td>
+                    <td data-label="دوره">{faDigits(p.periodDays)} روز</td>
+                    <td data-label="وضعیت">
                       {p.isActive === false ? <Badge tone="muted">غیرفعال</Badge> : <Badge tone="success">فعال</Badge>}
                     </td>
                     <td>

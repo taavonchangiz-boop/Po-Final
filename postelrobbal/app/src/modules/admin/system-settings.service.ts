@@ -3,6 +3,7 @@ import { getDb } from '../../db/client.js';
 import { systemSettings } from '../../db/schema.js';
 import { AppError, ERR } from '../../core/errors.js';
 import { audit } from '../../core/audit.js';
+import { AI_PROVIDER_IDS } from '../../providers/ai/ai-providers.js';
 import nodemailer from 'nodemailer';
 
 /**
@@ -343,4 +344,257 @@ export async function sendTestEmail(actorId: string, to: string): Promise<{ ok: 
   } finally {
     transport.close();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Round 17 — dedicated form-shaped settings: general / ai / referral / security
+//
+// One system_settings key per namespace; value_json holds the whole document.
+// Reads merge stored values over defaults (type-checked per field, so a
+// hand-edited row can never crash the API); writes validate strictly with
+// Persian messages and upsert per key. The 'ai' document field name is
+// load-bearing: ai.service.resolveProvider() reads valueJson['default_provider'].
+// ---------------------------------------------------------------------------
+
+async function readSettingDoc(key: string): Promise<Record<string, unknown>> {
+  const db = getDb();
+  const [row] = await db
+    .select({ valueJson: systemSettings.valueJson })
+    .from(systemSettings)
+    .where(eq(systemSettings.settingKey, key))
+    .limit(1);
+  return isRecord(row?.valueJson) ? row.valueJson : {};
+}
+
+/** Strict string-field validation — numbers never coerce to strings. */
+function ensureDocStr(value: unknown, field: string, max: number): string {
+  if (typeof value !== 'string') {
+    throw new AppError(ERR.VALIDATION(`مقدار «${field}» باید متن باشد.`));
+  }
+  const v = value.trim();
+  if (v.length > max) {
+    throw new AppError(ERR.VALIDATION(`مقدار «${field}» باید حداکثر ${max} کاراکتر باشد.`));
+  }
+  return v;
+}
+
+function ensureDocBool(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new AppError(ERR.VALIDATION(`مقدار «${field}» باید بولی باشد.`));
+  }
+  return value;
+}
+
+// ---- general settings (site identity, support contacts, maintenance) ----
+
+export interface GeneralSettings {
+  siteNameFa: string;
+  siteTaglineFa: string;
+  supportEmail: string;
+  supportPhone: string;
+  termsNoteFa: string;
+  maintenanceEnabled: boolean;
+  maintenanceMessageFa: string;
+}
+
+const GENERAL_LIMITS: Record<'siteNameFa' | 'siteTaglineFa' | 'supportEmail' | 'supportPhone' | 'termsNoteFa' | 'maintenanceMessageFa', number> = {
+  siteNameFa: 60,
+  siteTaglineFa: 120,
+  supportEmail: 190,
+  supportPhone: 20,
+  termsNoteFa: 300,
+  maintenanceMessageFa: 300,
+};
+
+const GENERAL_DEFAULTS: GeneralSettings = {
+  siteNameFa: 'پُست‌یار',
+  siteTaglineFa: '',
+  supportEmail: '',
+  supportPhone: '',
+  termsNoteFa: '',
+  maintenanceEnabled: false,
+  maintenanceMessageFa: '',
+};
+
+export async function getGeneralSettings(): Promise<GeneralSettings> {
+  const doc = await readSettingDoc('general');
+  const s: GeneralSettings = { ...GENERAL_DEFAULTS };
+  const str = (k: keyof typeof GENERAL_LIMITS): string | undefined => {
+    const v = doc[k];
+    return typeof v === 'string' ? v.trim().slice(0, GENERAL_LIMITS[k]) : undefined;
+  };
+  const siteName = str('siteNameFa');
+  if (siteName) s.siteNameFa = siteName; // default is non-empty — never blank
+  s.siteTaglineFa = str('siteTaglineFa') ?? s.siteTaglineFa;
+  s.supportEmail = str('supportEmail') ?? s.supportEmail;
+  s.supportPhone = str('supportPhone') ?? s.supportPhone;
+  s.termsNoteFa = str('termsNoteFa') ?? s.termsNoteFa;
+  if (typeof doc['maintenanceEnabled'] === 'boolean') s.maintenanceEnabled = doc['maintenanceEnabled'];
+  s.maintenanceMessageFa = str('maintenanceMessageFa') ?? s.maintenanceMessageFa;
+  return s;
+}
+
+export interface GeneralSettingsPatch {
+  siteNameFa?: string;
+  siteTaglineFa?: string;
+  supportEmail?: string;
+  supportPhone?: string;
+  termsNoteFa?: string;
+  maintenanceEnabled?: boolean;
+  maintenanceMessageFa?: string;
+}
+
+export async function putGeneralSettings(patch: GeneralSettingsPatch): Promise<string[]> {
+  const merged: GeneralSettings = await getGeneralSettings();
+  const updated: string[] = [];
+  if (patch.siteNameFa !== undefined) {
+    const v = ensureDocStr(patch.siteNameFa, 'siteNameFa', GENERAL_LIMITS.siteNameFa);
+    if (v === '') throw new AppError(ERR.VALIDATION('نام سایت الزامی است.'));
+    merged.siteNameFa = v;
+    updated.push('siteNameFa');
+  }
+  if (patch.siteTaglineFa !== undefined) {
+    merged.siteTaglineFa = ensureDocStr(patch.siteTaglineFa, 'siteTaglineFa', GENERAL_LIMITS.siteTaglineFa);
+    updated.push('siteTaglineFa');
+  }
+  if (patch.supportEmail !== undefined) {
+    const v = ensureDocStr(patch.supportEmail, 'supportEmail', GENERAL_LIMITS.supportEmail);
+    if (v !== '' && !v.includes('@')) throw new AppError(ERR.VALIDATION('ایمیل پشتیبانی معتبر نیست.'));
+    merged.supportEmail = v;
+    updated.push('supportEmail');
+  }
+  if (patch.supportPhone !== undefined) {
+    merged.supportPhone = ensureDocStr(patch.supportPhone, 'supportPhone', GENERAL_LIMITS.supportPhone);
+    updated.push('supportPhone');
+  }
+  if (patch.termsNoteFa !== undefined) {
+    merged.termsNoteFa = ensureDocStr(patch.termsNoteFa, 'termsNoteFa', GENERAL_LIMITS.termsNoteFa);
+    updated.push('termsNoteFa');
+  }
+  if (patch.maintenanceEnabled !== undefined) {
+    merged.maintenanceEnabled = ensureDocBool(patch.maintenanceEnabled, 'maintenanceEnabled');
+    updated.push('maintenanceEnabled');
+  }
+  if (patch.maintenanceMessageFa !== undefined) {
+    merged.maintenanceMessageFa = ensureDocStr(patch.maintenanceMessageFa, 'maintenanceMessageFa', GENERAL_LIMITS.maintenanceMessageFa);
+    updated.push('maintenanceMessageFa');
+  }
+  await upsertSetting('general', merged);
+  return updated;
+}
+
+// ---- ai settings (default provider) -------------------------------------
+
+export type AiProviderId = (typeof AI_PROVIDER_IDS)[number];
+
+export interface AiSettings {
+  default_provider: AiProviderId;
+}
+
+const AI_DEFAULTS: AiSettings = { default_provider: 'openai' };
+
+export async function getAiSettings(): Promise<AiSettings> {
+  const raw = (await readSettingDoc('ai'))['default_provider'];
+  if (typeof raw === 'string' && (AI_PROVIDER_IDS as readonly string[]).includes(raw.toLowerCase())) {
+    return { default_provider: raw.toLowerCase() as AiProviderId };
+  }
+  return { ...AI_DEFAULTS };
+}
+
+export interface AiSettingsPatch {
+  default_provider?: AiProviderId;
+}
+
+export async function putAiSettings(patch: AiSettingsPatch): Promise<string[]> {
+  const merged = { ...(await readSettingDoc('ai')) };
+  const updated: string[] = [];
+  if (patch.default_provider !== undefined) {
+    if (!(AI_PROVIDER_IDS as readonly string[]).includes(patch.default_provider)) {
+      throw new AppError(ERR.VALIDATION('سرویس‌دهندهٔ هوش مصنوعی معتبر نیست.'));
+    }
+    // EXACT field name — ai.service.resolveProvider() reads 'default_provider'.
+    merged['default_provider'] = patch.default_provider;
+    updated.push('default_provider');
+  }
+  await upsertSetting('ai', merged);
+  return updated;
+}
+
+// ---- referral settings (register reward points) --------------------------
+
+export interface ReferralSettings {
+  registerRewardPoints: number;
+}
+
+export const REFERRAL_POINTS_MIN = 0;
+export const REFERRAL_POINTS_MAX = 100000;
+const REFERRAL_DEFAULTS: ReferralSettings = { registerRewardPoints: 100 };
+
+export async function getReferralSettings(): Promise<ReferralSettings> {
+  const raw = (await readSettingDoc('referral'))['registerRewardPoints'];
+  if (
+    typeof raw === 'number' &&
+    Number.isInteger(raw) &&
+    raw >= REFERRAL_POINTS_MIN &&
+    raw <= REFERRAL_POINTS_MAX
+  ) {
+    return { registerRewardPoints: raw };
+  }
+  return { ...REFERRAL_DEFAULTS };
+}
+
+export interface ReferralSettingsPatch {
+  registerRewardPoints?: number;
+}
+
+export async function putReferralSettings(patch: ReferralSettingsPatch): Promise<string[]> {
+  const merged = { ...(await readSettingDoc('referral')) };
+  const updated: string[] = [];
+  if (patch.registerRewardPoints !== undefined) {
+    const v = patch.registerRewardPoints;
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < REFERRAL_POINTS_MIN || v > REFERRAL_POINTS_MAX) {
+      throw new AppError(ERR.VALIDATION('امتیاز پاداش معرفی باید عدد صحیح بین ۰ تا ۱۰۰۰۰۰ باشد.'));
+    }
+    merged['registerRewardPoints'] = v;
+    updated.push('registerRewardPoints');
+  }
+  await upsertSetting('referral', merged);
+  return updated;
+}
+
+// ---- security settings (registration toggle, captcha toggle) -------------
+
+export interface SecuritySettings {
+  registrationEnabled: boolean;
+  captchaEnabled: boolean;
+}
+
+const SECURITY_DEFAULTS: SecuritySettings = { registrationEnabled: true, captchaEnabled: true };
+
+export async function getSecuritySettings(): Promise<SecuritySettings> {
+  const doc = await readSettingDoc('security');
+  const s: SecuritySettings = { ...SECURITY_DEFAULTS };
+  if (typeof doc['registrationEnabled'] === 'boolean') s.registrationEnabled = doc['registrationEnabled'];
+  if (typeof doc['captchaEnabled'] === 'boolean') s.captchaEnabled = doc['captchaEnabled'];
+  return s;
+}
+
+export interface SecuritySettingsPatch {
+  registrationEnabled?: boolean;
+  captchaEnabled?: boolean;
+}
+
+export async function putSecuritySettings(patch: SecuritySettingsPatch): Promise<string[]> {
+  const merged = { ...(await readSettingDoc('security')) };
+  const updated: string[] = [];
+  if (patch.registrationEnabled !== undefined) {
+    merged['registrationEnabled'] = ensureDocBool(patch.registrationEnabled, 'registrationEnabled');
+    updated.push('registrationEnabled');
+  }
+  if (patch.captchaEnabled !== undefined) {
+    merged['captchaEnabled'] = ensureDocBool(patch.captchaEnabled, 'captchaEnabled');
+    updated.push('captchaEnabled');
+  }
+  await upsertSetting('security', merged);
+  return updated;
 }

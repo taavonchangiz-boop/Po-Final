@@ -5,15 +5,15 @@ import { Card, EmptyState, PageLoading, StatCard } from '../../components/ui';
 import { NavIcon } from '../../components/icons';
 import { PLATFORM_FA, faFileSize, faMoney, faNumber } from '../../lib/format';
 import { useToast } from '../../lib/toast';
-import { ADMIN_SECTIONS, PlatformIcon, errText, type AdminOverview } from './shared';
+import { ADMIN_SECTIONS_FLAT, PlatformIcon, errText, type AdminOverview } from './shared';
 
 /* ------------------------------------------------------------------ */
 /* داشبورد مدیریت — overview of users, revenue, platforms, gold,       */
 /* posts, usage + quick links to the other 11 sections (Task 16-b).    */
 /* ------------------------------------------------------------------ */
 
-const STAT_GRID = { display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' } as const;
-const TRIO_GRID = { display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' } as const;
+const STAT_GRID = { display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fill, minmax(min(220px, 100%), 1fr))' } as const;
+const TRIO_GRID = { display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))' } as const;
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -159,7 +159,7 @@ export default function AdminHome() {
           <strong>دسترسی سریع به بخش‌ها</strong>
         </div>
         <div className="adm-quick">
-          {ADMIN_SECTIONS.filter((s) => !s.end).map((s) => (
+          {ADMIN_SECTIONS_FLAT.filter((s) => !s.end).map((s) => (
             <Link key={s.to} to={s.to} className="adm-quick__tile">
               <span className="adm-quick__icon" aria-hidden="true"><NavIcon name={s.icon} size={19} /></span>
               <span>{s.label}</span>

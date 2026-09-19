@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal, Button, Field, Input } from './ui';
 import { CaptchaField, type CaptchaHandle, type CaptchaValue } from './CaptchaField';
@@ -18,19 +18,56 @@ const BUSINESS_TYPES = [
   'فروشگاهی', 'خدماتی', 'آموزشی', 'رسانه‌ای و خبری', 'فناوری اطلاعات', 'نرخ و بازار مالی', 'سایر',
 ];
 
-/** Shared login/register modal (§77). Registration fields per contract §42. */
+/* Public security switches (Task 17-b): GET /settings/security decides
+   whether the captcha field renders and whether registration is open.
+   Cached per session; on any failure both default to true (old behavior). */
+interface SecuritySettings {
+  registrationEnabled: boolean;
+  captchaEnabled: boolean;
+}
+
+let securityCache: SecuritySettings | null = null;
+
 export function AuthModal({ open, mode, onModeChange, onClose }: AuthModalProps) {
+  const [security, setSecurity] = useState<SecuritySettings | null>(securityCache);
+
+  useEffect(() => {
+    if (!open) return;
+    if (securityCache) {
+      setSecurity(securityCache);
+      return;
+    }
+    let alive = true;
+    api
+      .get<SecuritySettings>('/api/v1/settings/security')
+      .then((d) => {
+        const s: SecuritySettings = {
+          registrationEnabled: d.registrationEnabled !== false,
+          captchaEnabled: d.captchaEnabled !== false,
+        };
+        securityCache = s;
+        if (alive) setSecurity(s);
+      })
+      .catch(() => undefined); // endpoint failed → keep both enabled (current behavior)
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  const captchaEnabled = security?.captchaEnabled ?? true;
+  const registrationEnabled = security?.registrationEnabled ?? true;
+
   return (
     <Modal open={open} onClose={onClose} title={mode === 'login' ? 'ورود به حساب کاربری' : mode === 'register' ? 'ساخت حساب جدید' : 'بازیابی رمز عبور'}>
       {/* key={mode} → fresh captcha challenge whenever the form switches */}
-      {mode === 'login' && <LoginForm key="login" onModeChange={onModeChange} onClose={onClose} />}
-      {mode === 'register' && <RegisterForm key="register" onModeChange={onModeChange} />}
+      {mode === 'login' && <LoginForm key="login" onModeChange={onModeChange} onClose={onClose} captchaEnabled={captchaEnabled} />}
+      {mode === 'register' && <RegisterForm key="register" onModeChange={onModeChange} captchaEnabled={captchaEnabled} registrationEnabled={registrationEnabled} />}
       {mode === 'forgot' && <ForgotForm onModeChange={onModeChange} />}
     </Modal>
   );
 }
 
-function LoginForm({ onModeChange, onClose }: { onModeChange: (m: 'login' | 'register' | 'forgot') => void; onClose: () => void }) {
+function LoginForm({ onModeChange, onClose, captchaEnabled }: { onModeChange: (m: 'login' | 'register' | 'forgot') => void; onClose: () => void; captchaEnabled: boolean }) {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [captcha, setCaptcha] = useState<CaptchaValue | null>(null);
@@ -43,19 +80,19 @@ function LoginForm({ onModeChange, onClose }: { onModeChange: (m: 'login' | 'reg
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!captcha?.captchaId || !captcha.captchaText.trim()) {
+    if (captchaEnabled && (!captcha?.captchaId || !captcha.captchaText.trim())) {
       setCaptchaError('کد امنیتی را وارد کنید.');
       return;
     }
     setBusy(true);
     setError('');
     try {
-      const data = await api.post<MeResponse>('/api/v1/auth/login', {
-        identifier,
-        password,
-        captchaId: captcha.captchaId,
-        captchaText: captcha.captchaText,
-      });
+      const payload: Record<string, unknown> = { identifier, password };
+      if (captchaEnabled && captcha) {
+        payload.captchaId = captcha.captchaId;
+        payload.captchaText = captcha.captchaText;
+      }
+      const data = await api.post<MeResponse>('/api/v1/auth/login', payload);
       setCsrfToken(data.csrfToken);
       await refresh();
       onClose();
@@ -64,8 +101,10 @@ function LoginForm({ onModeChange, onClose }: { onModeChange: (m: 'login' | 'reg
       const msg = err instanceof ApiRequestError ? err.message : 'ورود ناموفق بود.';
       // Every failed attempt consumed the one-time challenge → always refresh;
       // captcha-specific errors also show inline on the field (item 15)
-      captchaRef.current?.refresh();
-      setCaptcha(null);
+      if (captchaEnabled) {
+        captchaRef.current?.refresh();
+        setCaptcha(null);
+      }
       if (msg.includes('کد امنیتی')) {
         setCaptchaError(msg);
       } else {
@@ -84,14 +123,16 @@ function LoginForm({ onModeChange, onClose }: { onModeChange: (m: 'login' | 'reg
       <Field label="رمز عبور" required>
         <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
       </Field>
-      <CaptchaField
-        ref={captchaRef}
-        onChange={(v) => {
-          setCaptcha(v);
-          setCaptchaError('');
-        }}
-        invalidToken={captchaError}
-      />
+      {captchaEnabled && (
+        <CaptchaField
+          ref={captchaRef}
+          onChange={(v) => {
+            setCaptcha(v);
+            setCaptchaError('');
+          }}
+          invalidToken={captchaError}
+        />
+      )}
       {error && <p className="field-error" style={{ marginBottom: 10 }} role="alert">{error}</p>}
       <Button type="submit" block loading={busy}>ورود</Button>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14, fontSize: 13 }}>
@@ -106,7 +147,7 @@ function LoginForm({ onModeChange, onClose }: { onModeChange: (m: 'login' | 'reg
   );
 }
 
-function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register' | 'forgot') => void }) {
+function RegisterForm({ onModeChange, captchaEnabled, registrationEnabled }: { onModeChange: (m: 'login' | 'register' | 'forgot') => void; captchaEnabled: boolean; registrationEnabled: boolean }) {
   const [form, setForm] = useState({
     firstName: '', lastName: '', mobile: '', email: '', businessName: '', businessType: BUSINESS_TYPES[0], password: '', passwordRepeat: '',
   });
@@ -125,6 +166,7 @@ function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register'
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
   function validate(): boolean {
+    if (!registrationEnabled) return false;
     const errs: Record<string, string> = {};
     if (!form.firstName.trim()) errs.firstName = 'نام را وارد کنید.';
     if (!form.lastName.trim()) errs.lastName = 'نام خانوادگی را وارد کنید.';
@@ -135,7 +177,7 @@ function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register'
     if (form.password !== form.passwordRepeat) errs.passwordRepeat = 'تکرار رمز عبور مطابقت ندارد.';
     if (!acceptTerms) errs.acceptTerms = 'پذیرش قوانین الزامی است.';
     let valid = Object.keys(errs).length === 0;
-    if (!captcha?.captchaId || !captcha.captchaText.trim()) {
+    if (captchaEnabled && (!captcha?.captchaId || !captcha.captchaText.trim())) {
       setCaptchaError('کد امنیتی را وارد کنید.');
       valid = false;
     }
@@ -145,17 +187,21 @@ function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register'
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!registrationEnabled) return;
     if (!validate()) return;
     setBusy(true);
     try {
-      const data = await api.post<MeResponse>('/api/v1/auth/register', {
+      const payload: Record<string, unknown> = {
         ...form,
         mobile: toLatinDigits(form.mobile).replace(/\s/g, ''),
         acceptTerms,
         ...(referralCode ? { referralCode } : {}),
-        captchaId: captcha!.captchaId,
-        captchaText: captcha!.captchaText,
-      });
+      };
+      if (captchaEnabled && captcha) {
+        payload.captchaId = captcha.captchaId;
+        payload.captchaText = captcha.captchaText;
+      }
+      const data = await api.post<MeResponse>('/api/v1/auth/register', payload);
       setCsrfToken(data.csrfToken);
       await refresh();
       toast.success('حساب شما با موفقیت ساخته شد. خوش آمدید!');
@@ -164,8 +210,10 @@ function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register'
       const msg = err instanceof ApiRequestError ? err.message : 'ثبت‌نام ناموفق بود.';
       // Every failed attempt consumed the one-time challenge → always refresh;
       // captcha-specific errors also show inline on the field (item 15)
-      captchaRef.current?.refresh();
-      setCaptcha(null);
+      if (captchaEnabled) {
+        captchaRef.current?.refresh();
+        setCaptcha(null);
+      }
       if (msg.includes('کد امنیتی')) {
         setCaptchaError(msg);
       } else {
@@ -208,14 +256,28 @@ function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register'
       <Field label="تکرار رمز عبور" required error={errors.passwordRepeat}>
         <Input type="password" value={form.passwordRepeat} onChange={set('passwordRepeat')} error={!!errors.passwordRepeat} autoComplete="new-password" />
       </Field>
-      <CaptchaField
-        ref={captchaRef}
-        onChange={(v) => {
-          setCaptcha(v);
-          setCaptchaError('');
-        }}
-        invalidToken={captchaError}
-      />
+      {!registrationEnabled && (
+        <div
+          role="alert"
+          style={{
+            background: 'var(--warning-soft)', color: 'var(--warning)', border: '1px solid rgba(217, 119, 6, 0.25)',
+            borderRadius: 12, padding: '11px 14px', fontSize: 13, fontWeight: 600, marginBottom: 12, display: 'flex', gap: 9,
+          }}
+        >
+          <span aria-hidden="true">⚠️</span>
+          <span>ثبت‌نام موقتاً غیرفعال است.</span>
+        </div>
+      )}
+      {captchaEnabled && (
+        <CaptchaField
+          ref={captchaRef}
+          onChange={(v) => {
+            setCaptcha(v);
+            setCaptchaError('');
+          }}
+          invalidToken={captchaError}
+        />
+      )}
       {referralCode && <p className="field-hint" style={{ marginBottom: 10 }}>کد معرف واردشده: {referralCode}</p>}
       <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, marginBottom: 14, cursor: 'pointer' }}>
         <input type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} style={{ marginTop: 4 }} />
@@ -225,7 +287,7 @@ function RegisterForm({ onModeChange }: { onModeChange: (m: 'login' | 'register'
         </span>
       </label>
       {errors.form && <p className="field-error" style={{ marginBottom: 10 }} role="alert">{errors.form}</p>}
-      <Button type="submit" block loading={busy}>ساخت حساب رایگان</Button>
+      <Button type="submit" block loading={busy} disabled={!registrationEnabled}>ساخت حساب رایگان</Button>
       <div style={{ textAlign: 'center', marginTop: 14, fontSize: 13 }}>
         حساب دارید؟{' '}
         <button type="button" style={{ background: 'none', border: 'none', color: 'var(--brand)', fontWeight: 600 }} onClick={() => onModeChange('login')}>

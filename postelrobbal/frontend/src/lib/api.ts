@@ -84,9 +84,26 @@ export const api = {
 
 /** Shared types mirroring the API contract (§84). */
 export interface MeResponse {
-  user: { id: string; firstName: string; lastName: string; email: string; businessName: string; role: string };
+  user: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    businessName: string;
+    role: string;
+    /* Task 17-b avatar fields (avatarKind 'character' | 'photo'). */
+    avatarKind?: 'character' | 'photo';
+    avatarValue?: string;
+    avatarMediaId?: string | null;
+  };
   subscription: { id: string; state: string; expiresAt: string; planName: string; planCode: string } | null;
   csrfToken: string;
+}
+
+/** Same-origin URL of a user's photo avatar (cookies ride along). */
+export function avatarPhotoUrl(userId: string, avatarMediaId?: string | null): string | undefined {
+  const bust = avatarMediaId ? `?v=${encodeURIComponent(avatarMediaId)}` : '';
+  return `/api/v1/users/${userId}/avatar${bust}`;
 }
 
 export interface PlanDto {

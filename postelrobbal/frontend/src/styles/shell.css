@@ -152,22 +152,23 @@
 .dash-topbar__name { font-size: 13px; font-weight: 600; color: var(--text); }
 .dash-topbar__logout { min-height: 40px; }
 
-/* Mobile user avatar (Task 14-a): initials on the brand gradient, hidden on
-   desktop where the name + logout button are shown instead. */
+/* User avatar button (Task 17-b): renders the <Avatar> component (standard
+   character SVG / photo). Shown on mobile AND desktop next to the name. */
 .dash-avatar {
-  display: none;
+  display: inline-flex;
   width: 40px;
   height: 40px;
+  padding: 0;
   border-radius: 999px;
   border: 2px solid rgba(255, 255, 255, 0.9);
   background: var(--brand-grad);
   color: #fff;
   font-family: inherit;
-  font-size: 13.5px;
   font-weight: 800;
   line-height: 1;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   box-shadow: 0 3px 10px rgba(99, 102, 241, 0.3);
   flex-shrink: 0;
 }
@@ -186,12 +187,16 @@
   animation: shellPop 0.18s ease;
 }
 .dash-userpop__id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px 9px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 6px;
 }
+.dash-userpop__id > div { min-width: 0; }
 .dash-userpop__id strong { display: block; font-size: 13.5px; }
-.dash-userpop__id span { display: block; font-size: 11.5px; color: var(--text-2); }
+.dash-userpop__id span { display: block; font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
 .dash-userpop__row {
   display: flex;
   align-items: center;
@@ -223,7 +228,6 @@
   }
   .dash-topbar__name { display: none; }
   .dash-topbar__logout { display: none; }
-  .dash-avatar { display: inline-flex; }
 }
 
 .dash-iconbtn {

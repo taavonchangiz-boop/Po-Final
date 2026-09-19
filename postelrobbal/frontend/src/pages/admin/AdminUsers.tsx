@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, avatarPhotoUrl } from '../../lib/api';
 import { Button, Card, ConfirmDialog, EmptyState, Field, Modal, PageLoading, Pagination, Select, StatusBadge, Input } from '../../components/ui';
+import { Avatar } from '../../components/Avatar';
 import { faDate, faDigits } from '../../lib/format';
 import { useToast } from '../../lib/toast';
 import { PAGE_SIZE, ROLE_FA, USER_STATUS_FA, errText, type AdminPlanDto, type AdminUserRow } from './shared';
@@ -137,9 +138,10 @@ export default function AdminUsers() {
         ) : (
           <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table adm-table--cards">
                 <thead>
                   <tr>
+                    <th><span className="sr-only">تصویر</span></th>
                     <th>نام</th>
                     <th>ایمیل</th>
                     <th>موبایل</th>
@@ -150,38 +152,45 @@ export default function AdminUsers() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((u) => (
-                    <tr key={u.id}>
-                      <td style={{ fontWeight: 600 }}>{`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || '—'}</td>
-                      <td dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{u.email || '—'}</td>
-                      <td dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{u.mobile ? faDigits(u.mobile) : '—'}</td>
-                      <td><span className="badge badge-brand">{ROLE_FA[u.role ?? ''] ?? u.role}</span></td>
-                      <td><StatusBadge state={u.status ?? ''} labels={USER_STATUS_FA} /></td>
-                      <td>{faDate(u.createdAt)}</td>
-                      <td>
-                        <div className="adm-table-actions">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setConfirmAction({ user: u, suspend: u.status !== 'SUSPENDED' })}
-                          >
-                            {u.status === 'SUSPENDED' ? 'فعال‌سازی' : 'تعلیق'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="soft"
-                            onClick={() => {
-                              setGrantUser(u);
-                              setGrantPlan(plans[0]?.code ?? '');
-                              setGrantMonths(1);
-                            }}
-                          >
-                            هدیهٔ اشتراک
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {items.map((u) => {
+                    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim();
+                    const photo = u.avatarKind === 'photo' ? avatarPhotoUrl(u.id, u.avatarMediaId) : undefined;
+                    return (
+                      <tr key={u.id}>
+                        <td data-label="تصویر">
+                          <Avatar kind={u.avatarKind} value={u.avatarValue} photoUrl={photo} name={name} size={32} />
+                        </td>
+                        <td data-label="نام" style={{ fontWeight: 600 }}>{name || '—'}</td>
+                        <td data-label="ایمیل" dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{u.email || '—'}</td>
+                        <td data-label="موبایل" dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{u.mobile ? faDigits(u.mobile) : '—'}</td>
+                        <td data-label="نقش"><span className="badge badge-brand">{ROLE_FA[u.role ?? ''] ?? u.role}</span></td>
+                        <td data-label="وضعیت"><StatusBadge state={u.status ?? ''} labels={USER_STATUS_FA} /></td>
+                        <td data-label="تاریخ عضویت">{faDate(u.createdAt)}</td>
+                        <td>
+                          <div className="adm-table-actions">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setConfirmAction({ user: u, suspend: u.status !== 'SUSPENDED' })}
+                            >
+                              {u.status === 'SUSPENDED' ? 'فعال‌سازی' : 'تعلیق'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="soft"
+                              onClick={() => {
+                                setGrantUser(u);
+                                setGrantPlan(plans[0]?.code ?? '');
+                                setGrantMonths(1);
+                              }}
+                            >
+                              هدیهٔ اشتراک
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -35,6 +35,11 @@ export const users = mysqlTable('users', {
   role: mysqlEnum('role', ['SUPER_ADMIN', 'SUPPORT', 'USER']).notNull().default('USER'),
   status: mysqlEnum('status', ['ACTIVE', 'SUSPENDED']).notNull().default('ACTIVE'),
   timezone: varchar('timezone', { length: 64 }).notNull().default('Asia/Tehran'),
+  // Round 17 avatars: 'character' → avatar_value holds an AVATAR_CHARACTERS key
+  // (frontend SVG); 'photo' → avatar_media_id → media row (512×512 WebP).
+  avatarKind: mysqlEnum('avatar_kind', ['character', 'photo']).notNull().default('character'),
+  avatarValue: varchar('avatar_value', { length: 32 }).notNull().default(''),
+  avatarMediaId: char('avatar_media_id', { length: 26 }),
   lastLoginAt: datetime('last_login_at'),
   createdAt: ts(),
   updatedAt: datetime('updated_at').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),

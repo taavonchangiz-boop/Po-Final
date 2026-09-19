@@ -71,3 +71,33 @@ The admin area was a single page with 5 tabs; it is now a full multi-section man
 - `GET /admin/overview` rewritten (nested shape); `GET /admin/channels`, `GET /admin/bots`; `POST/DELETE /admin/plans` (PUT extended); dedicated `GET/PUT /admin/settings/payments|sms|email` + `POST /admin/settings/email/test`; new gateway adapters `zibal.ts` / `idpay.ts`; `paymentProvider` default switched to `zibal`; new `paymentGateways` settings key with per-provider config merge.
 - **Root-cause fixes**: (a) admin overview fired 27 concurrent queries against a pool with `queueLimit: 20` → mysql2 "Queue limit reached"; queries now run with bounded concurrency (5). (b) `gold_snapshots.capturedAt` was mapped to the wrong column by the shared `ts()` helper (`created_at`) — the Gold feature's snapshot lookup would crash at runtime; schema mapping corrected to `captured_at`.
 - `.htaccess` restored (it had been wiped from `public_html/` by an earlier `--emptyOutDir` build) and now ships inside the Vite `public/` dir so every build re-emits it (SPA fallback + api/health passthrough + hidden-file deny + asset caching).
+
+## v1.4.0 — پنل مدیریت، تنظیمات و آواتار (بازخورد کاربر، دور ۱۷)
+
+**پنل مدیریت**
+- **تک‌سایدبار**: پنل مدیریت دیگر داخل پوستهٔ داشبورد کاربری رندر نمی‌شود؛ مسیرهای `/dashboard/admin/*` به یک شل مستقل بالاترین‌سطح منتقل شدند — فقط سایدبار مدیریت (باسایدبار کاربری هرگز همزمان دیده نمی‌شود). آدرس‌ها بدون تغییر مانده‌اند.
+- ناوبری موبایل: کشوی off-canvas از راست (backdrop/Esc/تغییر مسیر می‌بندد، قفل اسکرول، فوکوس خودکار) جایگزین ردیف چیپ‌ها؛ در ≤560px دکمهٔ بازگشت آیکونی و «خروج» داخل کشو.
+- سایدبار گروه‌بندی شد: مدیریت / مالی / ارتباطات / تنظیمات.
+
+**تنظیمات**
+- ویرایشگر JSON/کد حذف شد؛ «مرکز تنظیمات» هاب کارت‌محور شد و هر بخش صفحهٔ تنظیمات فرم‌محور اختصاصی خودش را دارد:
+  - **عمومی**: نام/شعار سایت، ایمیل و تلفن پشتیبانی، یادداشت قوانین، حالت تعمیر و نگهداری (+پیام).
+  - **هوش مصنوعی**: انتخاب سرویس‌دهندهٔ پیش‌فرض از ۶ گزینه (تیل‌های انتخابی) — به `default_provider` واقعی متصل است.
+  - **زیرمجموعه‌گیری**: امتیاز پاداش معرفی — مستقیماً در اعطای پاداش ثبت‌نام اعمال می‌شود.
+  - **امنیت**: کلید ثبت‌نام و کلید کپچا — هر دو در مسیرهای auth سیم‌کشی شده‌اند (غیرفعال‌سازی واقعی).
+- Endpoints: `GET/PUT /admin/settings/{general,ai,referral,security}` + عمومیِ whitelist‌شده `GET /settings/{general,security,referral}`؛ همهٔ PUTها audit می‌شوند.
+
+**آواتارها (تصویر کاربر)**
+- ۱۲ «کاراکتر استاندارد» SVG پارامتریک (دترمینیستیک، پالت‌های ملایم هماهنگ با برند) — هیچ‌جا کادر خالی/حروف اول دیده نمی‌شود؛ حالت پیش‌فرض از نام کاربر کاراکتر می‌سازد.
+- کاربر می‌تواند عکس شخصی آپلود کند: `POST /users/me/avatar` (multipart) → برش مربع ۵۱۲ و تبدیل به WebP؛ `PUT /users/me/avatar/character`، `DELETE /users/me/avatar`، `GET /users/:id/avatar`. ستون آواتار در فهرست کاربران مدیر.
+
+**خط لولهٔ تصویر فقط-WebP**
+- هر تصویر آپلودی (JPG/PNG/WebP/GIF/AVIF/TIFF/BMP/HEIC) با sharp پردازش و **فقط** به WebP بهینه ذخیره می‌شود (حد ۱۹۲۰px، حفظ انیمیشن GIF→WebP چندصفحه‌ای، پر کردن width/height، چک‌سام خروجی)؛ **فایل اصلی هرگز ذخیره نمی‌شود**؛ خطای پردازش → 422 فارسی بدون ذخیرهٔ هیچ‌چیز. GIF متحرک → WebP متحرک.
+
+**ریسپانسیو**
+- admin.css از پایه mobile-first بازنویسی شد: تایپ clamp()، گریدهای `minmax(min(X,100%),1fr)`، insetهای safe-area، اهداف لمسی ۴۴px.
+- جداول داده در ≤680px به کارت‌های جمع‌شونده با `data-label` فارسی تبدیل می‌شوند (کاربران/پلن‌ها/پرداخت‌ها/رویدادها/کانال‌ها/ربات‌ها).
+- رفع ریشه‌ای: جدول داخل Card مسیر گرید تک‌ستونی را به ۵۶۲px می‌کشید و صفحه در RTL از چپ بریده می‌شد → `.adm-main > * { min-width:0 }`.
+- فرم AuthModal از `GET /settings/security` می‌خواند: کپچا مخفی/ثبت‌نام غیرفعال به‌درستی منعکس می‌شود.
+
+**پایگاه‌داده**: مهاجرت `0004_user_avatars.sql` (`avatar_kind`, `avatar_value`, `avatar_media_id`).

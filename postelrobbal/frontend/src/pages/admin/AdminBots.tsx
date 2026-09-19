@@ -97,7 +97,7 @@ export default function AdminBots() {
         ) : (
           <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table adm-table--cards">
                 <thead>
                   <tr>
                     <th>پلتفرم</th>
@@ -113,14 +113,14 @@ export default function AdminBots() {
                 <tbody>
                   {items.map((b) => (
                     <tr key={b.id}>
-                      <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><PlatformIcon platform={b.platform} size={20} />{PLATFORM_FA[b.platform] ?? b.platform}</span></td>
-                      <td dir="ltr" style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{b.username || '—'}</td>
-                      <td style={{ fontWeight: 600 }}>{b.title || '—'}</td>
-                      <td><Badge tone={b.mode === 'WEBHOOK' ? 'info' : 'brand'}>{BOT_MODE_FA[b.mode ?? ''] ?? b.mode}</Badge></td>
-                      <td>{b.aiEnabled ? <Badge tone="success">فعال</Badge> : <Badge tone="muted">غیرفعال</Badge>}</td>
-                      <td><StatusBadge state={b.status ?? ''} labels={BOT_STATUS_FA} /></td>
-                      <td dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{b.ownerEmail || '—'}</td>
-                      <td>{faDate(b.createdAt)}</td>
+                      <td data-label="پلتفرم"><span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><PlatformIcon platform={b.platform} size={20} />{PLATFORM_FA[b.platform] ?? b.platform}</span></td>
+                      <td data-label="شناسهٔ کاربری" dir="ltr" style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{b.username || '—'}</td>
+                      <td data-label="عنوان" style={{ fontWeight: 600 }}>{b.title || '—'}</td>
+                      <td data-label="حالت اتصال"><Badge tone={b.mode === 'WEBHOOK' ? 'info' : 'brand'}>{BOT_MODE_FA[b.mode ?? ''] ?? b.mode}</Badge></td>
+                      <td data-label="هوش مصنوعی">{b.aiEnabled ? <Badge tone="success">فعال</Badge> : <Badge tone="muted">غیرفعال</Badge>}</td>
+                      <td data-label="وضعیت"><StatusBadge state={b.status ?? ''} labels={BOT_STATUS_FA} /></td>
+                      <td data-label="مالک" dir="ltr" style={{ textAlign: 'right', fontSize: 12.5 }}>{b.ownerEmail || '—'}</td>
+                      <td data-label="تاریخ اتصال">{faDate(b.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
