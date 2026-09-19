@@ -9,12 +9,18 @@ import {
   createSession, setSessionCookie, clearSessionCookie, revokeSession, revokeAllUserSessions,
 } from '../../security/sessions.js';
 import { issueCsrfToken } from '../../security/csrf.js';
+import { issueCaptcha, verifyCaptcha } from '../../security/captcha.js';
 import type { SessionUser } from '../../security/sessions.js';
 import { audit } from '../../core/audit.js';
 import { getDb } from '../../db/client.js';
 import { users, subscriptions, plans } from '../../db/schema.js';
 import { desc, eq } from 'drizzle-orm';
 import { parseWith } from '../../core/validation.js';
+
+const captchaFields = {
+  captchaId: z.string().min(16).max(64),
+  captchaText: z.string().min(3).max(10),
+};
 
 const registerSchema = z.object({
   firstName: z.string().min(1).max(80),
@@ -27,12 +33,16 @@ const registerSchema = z.object({
   passwordRepeat: z.string().min(8).max(128),
   acceptTerms: z.boolean().refine((v) => v === true),
   referralCode: z.string().max(32).optional(),
+  ...captchaFields,
 });
 
 const loginSchema = z.object({
   identifier: z.string().min(3).max(190),
   password: z.string().min(1).max(128),
+  ...captchaFields,
 });
+
+const CAPTCHA_FAILED = 'کد امنیتی نادرست است یا منقضی شده؛ کد جدید را وارد کنید.';
 
 const resetRequestSchema = z.object({ email: z.string().email() });
 const resetConfirmSchema = z.object({ token: z.string().min(10).max(200), password: z.string().min(8).max(128) });
@@ -61,8 +71,17 @@ function publicUser(u: {
 }
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
+  // Graphical captcha challenge (public; consumed on first verify attempt).
+  app.get('/auth/captcha', { config: { rateLimit: { max: 40, timeWindow: '1 minute' } } }, async () => {
+    const { captchaId, svg } = await issueCaptcha();
+    return { success: true, data: { captchaId, svg } };
+  });
+
   app.post('/auth/register', { config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (req, reply) => {
     const input = parse(registerSchema, req.body);
+    // Anti-bot gate BEFORE any DB work (item 15). One shot per code.
+    const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText);
+    if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     const { userId } = await registerUser(input, { ip: req.ip, userAgent: req.headers['user-agent'] });
     // Auto-login on successful registration (session rotation included)
     const session = await createSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
@@ -79,6 +98,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
     const input = parse(loginSchema, req.body);
+    // Anti-bot gate BEFORE credential check — identical error whether the
+    // captcha or the credentials failed, so no account state leaks (item 15).
+    const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText);
+    if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     const user = await authenticate(input.identifier, input.password);
     // Session rotation on login (§40): revoke previous sessions
     await revokeAllUserSessions(user.id).catch(() => undefined);

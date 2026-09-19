@@ -178,6 +178,19 @@
   background: linear-gradient(90deg, #e8eaf5, #f2f3fa);
   margin-bottom: 8px;
 }
+/* REAL dashboard screenshot inside the hero mock (item 7) */
+.ln-mock__shot {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top center;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 26px rgba(26, 29, 41, 0.10);
+  background: linear-gradient(135deg, #eef0fb, #f7f7fd);
+  display: block;
+  margin-bottom: 12px;
+}
 .ln-mock__caption--w80 { width: 82%; }
 .ln-mock__caption--w60 { width: 58%; }
 .ln-mock__chips { display: flex; gap: 7px; flex-wrap: wrap; margin: 14px 0; }
@@ -218,6 +231,7 @@
 .ln-mock__stat span { font-size: 10px; color: var(--text-2); }
 .ln-floatchip {
   position: absolute;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -233,8 +247,9 @@
   color: var(--text);
   animation: lnFloat 6s ease-in-out infinite alternate;
 }
-.ln-floatchip--sent { top: -16px; left: -14px; color: var(--success); animation-delay: -2.5s; }
-.ln-floatchip--grow { bottom: -14px; right: -12px; color: var(--brand-strong); animation-delay: -4s; }
+/* ON the hero image (feedback round 15, item 6): chips overlap the mock, not float below it */
+.ln-floatchip--sent { top: 26px; left: -14px; color: var(--success); animation-delay: -2.5s; }
+.ln-floatchip--grow { bottom: 88px; right: -14px; color: var(--brand-strong); animation-delay: -4s; }
 .ln-floatchip__dot { width: 22px; height: 22px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; }
 .ln-floatchip__dot--green { background: var(--success); }
 .ln-floatchip__dot--brand { background: var(--brand-grad); }
@@ -344,6 +359,37 @@ section[id] { scroll-margin-top: 96px; }
   justify-content: center;
   margin-bottom: 15px;
 }
+/* Graphical gradient icon tiles (item 12) */
+.ln-feature__icon--art {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  color: #fff;
+  position: relative;
+  margin-bottom: 16px;
+  box-shadow: 0 14px 28px rgba(38, 34, 110, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transition: transform 0.25s ease;
+}
+.ln-feature__icon--art::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.30), rgba(255, 255, 255, 0) 46%);
+  pointer-events: none;
+}
+.ln-feature__icon--art::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 22px;
+  border: 1.5px solid rgba(99, 102, 241, 0.28);
+  opacity: 0.55;
+  transition: opacity 0.25s ease, inset 0.25s ease;
+  pointer-events: none;
+}
+.ln-feature:hover .ln-feature__icon--art { transform: translateY(-3px) scale(1.04); }
+.ln-feature:hover .ln-feature__icon--art::after { opacity: 1; inset: -7px; }
 .ln-feature__title { font-size: 16px; font-weight: 800; margin: 0 0 7px; }
 .ln-feature__text { font-size: 13.5px; color: var(--text-2); line-height: 2; margin: 0; }
 

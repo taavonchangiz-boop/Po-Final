@@ -36,7 +36,7 @@ cd "${ROOT}"
 
 # Scan domain: real product/config/docs dirs; never node_modules/dist (vendor
 # and build output can legitimately contain third-party strings).
-SCAN_DIRS=(postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin postelrobbal/database postelrobbal/scripts docs assets audits .github public_html)
+SCAN_DIRS=(postelrobbal/app/src postelrobbal/frontend/src postelrobbal/wordpress-plugin postelrobbal/database postelrobbal/scripts docs .github public_html)
 SCAN_EXISTING=()
 for d in "${SCAN_DIRS[@]}"; do [ -e "$d" ] && SCAN_EXISTING+=("$d"); done
 
@@ -97,7 +97,7 @@ pass ".env.example contains placeholders only (by design)"
 # ------------------------------------------------------ 4. Next.js references
 echo "== 4/6 Next.js reference scan (product source only) =="
 NEXT_HITS=0
-for dir in postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin; do
+for dir in postelrobbal/app/src postelrobbal/frontend/src postelrobbal/wordpress-plugin; do
   [ -e "$dir" ] || continue
   HITS="$(grep -rEi "from ['\"]next(/|['\"]| )|require\(['\"]next|import\(['\"]next|['\"]next['\"]\s*:|nextjs|next\.js" "$dir" 2>/dev/null || true)"
   if [ -n "$HITS" ]; then
@@ -111,7 +111,7 @@ done
 # ------------------------------------------------------ 5. release markers
 echo "== 5/6 Unresolved release markers =="
 # --exclude=this script: its own pattern text would otherwise self-match.
-MARKER_HITS="$(grep -rn --exclude="release-check.sh" "TODO: RELEASE\|FIXME: RELEASE\|XXX: RELEASE" postelrobbal wordpress-plugin docs public_html 2>/dev/null || true)"
+MARKER_HITS="$(grep -rn --exclude="release-check.sh" "TODO: RELEASE\|FIXME: RELEASE\|XXX: RELEASE" postelrobbal docs public_html 2>/dev/null || true)"
 if [ -n "$MARKER_HITS" ]; then
   fail "explicit release markers found (plain TODO/FIXME are allowed):"
   printf '%s\n' "$MARKER_HITS"
@@ -121,8 +121,8 @@ fi
 
 # ------------------------------------------------ 6. required docs + structure
 echo "== 6/6 Required docs & structure =="
-for doc in README.md ARCHITECTURE.md DATABASE.md SECURITY.md DEPLOYMENT.md \
-           OPERATIONS.md TROUBLESHOOTING.md API.md WORDPRESS.md PRODUCT-SPEC.md SHA256SUMS; do
+for doc in docs/README.md docs/ARCHITECTURE.md docs/DATABASE.md docs/SECURITY.md docs/DEPLOYMENT.md \
+           docs/OPERATIONS.md docs/TROUBLESHOOTING.md docs/API.md docs/WORDPRESS.md docs/PRODUCT-SPEC.md docs/RELEASE-NOTES.md docs/WORDPRESS-CONNECTOR.md SHA256SUMS; do
   # Packaging-time exception: make-release.sh gates the staging copy BEFORE the
   # zip (and thus its hash) exists — SHA256SUMS is written at the repo root next
   # to the zip and cannot be inside it. The real-tree gate always enforces it.
@@ -143,9 +143,9 @@ for sql in postelrobbal/database/migrations/*.sql; do
   if [ -s "$sql" ]; then SQL_COUNT=$((SQL_COUNT + 1)); else fail "empty migration file: $sql"; fi
 done
 [ "$SQL_COUNT" -gt 0 ] && pass "postelrobbal/database/migrations: $SQL_COUNT non-empty SQL file(s)"
-[ -s "wordpress-plugin/postyar-connector/postyar-connector.php" ] \
-  && pass "wordpress-plugin/postyar-connector/postyar-connector.php" \
-  || fail "missing wordpress-plugin/postyar-connector/postyar-connector.php (connector plugin not shipped)"
+[ -s "postelrobbal/wordpress-plugin/postyar-connector/postyar-connector.php" ] \
+  && pass "postelrobbal/wordpress-plugin/postyar-connector/postyar-connector.php" \
+  || fail "missing postelrobbal/wordpress-plugin/postyar-connector/postyar-connector.php (connector plugin not shipped)"
 for s in postelrobbal/scripts/deploy.sh postelrobbal/scripts/release-check.sh; do
   [ -s "$s" ] && pass "$s" || fail "missing required script: $s"
 done

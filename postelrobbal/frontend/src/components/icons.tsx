@@ -21,6 +21,7 @@ export type NavIconName =
   | 'referrals'
   | 'notifications'
   | 'support'
+  | 'help'
   | 'settings'
   | 'admin'
   | 'more';
@@ -132,6 +133,13 @@ const PATHS: Record<NavIconName, ReactElement> = {
       <path d="m17.9 6.1-3.5 3.5" />
       <path d="m17.9 17.9-3.5-3.5" />
       <path d="m6.1 17.9 3.5-3.5" />
+    </>
+  ),
+  help: (
+    <>
+      <path d="M12 4.2 2.9 8.8 12 13.4l9.1-4.6L12 4.2Z" />
+      <path d="M6.3 10.6v4.9c0 1.7 2.55 3.2 5.7 3.2s5.7-1.5 5.7-3.2v-4.9" />
+      <path d="M21.1 9.2v5.6" />
     </>
   ),
   settings: (

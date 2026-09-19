@@ -5,6 +5,8 @@ import { PageLoading } from './components/ui';
 
 // Route-level code splitting (§82)
 const Landing = lazy(() => import('./pages/Landing'));
+const Terms = lazy(() => import('./pages/Terms'));
+const Help = lazy(() => import('./pages/dashboard/Help'));
 const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
 const Channels = lazy(() => import('./pages/dashboard/Channels'));
 const Posts = lazy(() => import('./pages/dashboard/Posts'));
@@ -33,6 +35,7 @@ export function App() {
       <Routes>
         <Route element={<LandingLayout />}>
           <Route path="/" element={<Landing />} />
+          <Route path="/terms" element={<Terms />} />
           <Route path="/payment/result" element={<PaymentResult />} />
           <Route path="*" element={<Landing />} />
         </Route>
@@ -56,6 +59,7 @@ export function App() {
           <Route path="notifications" element={<Notifications />} />
           <Route path="settings" element={<Settings />} />
           <Route path="support" element={<Support />} />
+          <Route path="help" element={<Help />} />
           <Route path="admin" element={<Admin />} />
         </Route>
       </Routes>

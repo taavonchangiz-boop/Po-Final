@@ -36,3 +36,6 @@ tmp/
 .DS_Store
 Thumbs.db
 postyar-production-final.zip
+
+# Release packaging artifacts (written beside the zip, not part of the tree)
+SHA256SUMS

@@ -8,6 +8,7 @@ import {
   type ChannelDto,
 } from '../../lib/api';
 import { Button, Card, EmptyState, Field, Input, PageLoading, Spinner, Textarea } from '../../components/ui';
+import { JalaliDateTimePicker } from '../../components/JalaliDateTimePicker';
 import { useToast } from '../../lib/toast';
 import { faDigits, faNumber, PLATFORM_FA } from '../../lib/format';
 
@@ -78,7 +79,7 @@ export default function PostNew() {
   const [rows, setRows] = useState<ButtonRow[]>([]);
   const [rowsError, setRowsError] = useState('');
 
-  const [scheduledAt, setScheduledAt] = useState('');
+  const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [scheduling, setScheduling] = useState(false);
 
@@ -222,8 +223,8 @@ export default function PostNew() {
       toast.error('تاریخ و ساعت انتشار را مشخص کنید.');
       return;
     }
-    const when = new Date(scheduledAt);
-    if (Number.isNaN(when.getTime()) || when.getTime() <= Date.now()) {
+    const when = scheduledAt;
+    if (!when || Number.isNaN(when.getTime()) || when.getTime() <= Date.now()) {
       toast.error('زمان انتشار باید در آینده باشد.');
       return;
     }
@@ -383,8 +384,8 @@ export default function PostNew() {
       </Card>
 
       <Card pad="lg">
-        <Field label="تاریخ و ساعت انتشار (برای زمان‌بندی)" hint="این فیلد فقط برای «زمان‌بندی» استفاده می‌شود.">
-          <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+        <Field label="تاریخ و ساعت انتشار (برای زمان‌بندی)" hint="تقویم شمسی — این فیلد فقط برای «زمان‌بندی» استفاده می‌شود.">
+          <JalaliDateTimePicker value={scheduledAt} onChange={setScheduledAt} restrictToFuture />
         </Field>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6 }}>
           <Button onClick={() => void publishNow()} loading={publishing}>🚀 انتشار فوری</Button>

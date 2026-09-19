@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { faDigits, faMoney } from '../lib/format';
 import type { PlanDto } from '../lib/api';
-import { NavIcon, type NavIconName } from '../components/icons';
+import { NavIcon } from '../components/icons';
 import { Logo } from '../components/Logo';
 import { BaleIcon, RubikaIcon, TelegramIcon } from '../components/PlatformIcons';
+import { FeatureArt, FEATURE_GRADIENTS, type FeatureArtName } from '../components/FeatureArt';
 
 /* ------------------------------------------------------------------ */
 /* Landing 2026 — Task 14-a. Persian RTL, self-contained CSS/SVG art,  */
@@ -11,7 +12,7 @@ import { BaleIcon, RubikaIcon, TelegramIcon } from '../components/PlatformIcons'
 /* Auth entry points stay deep-linked: /?auth=register & /?auth=login. */
 /* ------------------------------------------------------------------ */
 
-const FEATURES: Array<{ icon: NavIconName; title: string; text: string }> = [
+const FEATURES: Array<{ icon: FeatureArtName; title: string; text: string }> = [
   { icon: 'channels', title: 'مدیریت کانال‌ها', text: 'همهٔ کانال‌های تلگرام، بله و روبیکا در یک پنل؛ اتصال، تأیید و مدیریت بدون جابه‌جایی.' },
   { icon: 'posts', title: 'انتشار هم‌زمان', text: 'یک پست بنویسید و هم‌زمان در همهٔ کانال‌های انتخابی‌تان منتشر کنید.' },
   { icon: 'clock', title: 'زمان‌بندی خودکار', text: 'پست‌ها را با تقویم شمسی زمان‌بندی کنید؛ پُست‌یار سر موعد دقیق منتشر می‌کند.' },
@@ -250,7 +251,7 @@ function PricingGrid() {
   );
 }
 
-/** Hand-built «product screenshot» mock — styled divs, fully RTL. */
+/** Hand-built «product screenshot» frame with the REAL dashboard shot inside. */
 function HeroMock() {
   return (
     <div className="ln-hero__mockwrap" aria-hidden="true">
@@ -268,20 +269,20 @@ function HeroMock() {
       </div>
       <div className="ln-mock">
         <div className="ln-mock__head">
-          <Logo size={30} wordmarkSize={15} />
+          <Logo size={24} full />
           <span className="ln-mock__chip">پنل انتشار</span>
         </div>
-        <div className="ln-mock__caption" />
-        <div className="ln-mock__caption ln-mock__caption--w80" />
-        <div className="ln-mock__caption ln-mock__caption--w60" />
+        {/* REAL app screenshot (feedback round 15, item 7) */}
+        <img
+          className="ln-mock__shot"
+          src="/images/tutorial/dashboard-hero.png"
+          alt="نمای داشبورد پُست‌یار"
+          loading="eager"
+        />
         <div className="ln-mock__chips">
           <span className="ln-mock__platform is-on"><TelegramIcon size={15} /> @khabar_daily</span>
           <span className="ln-mock__platform is-on"><BaleIcon size={15} /> فروشگاه ما</span>
           <span className="ln-mock__platform"><RubikaIcon size={15} /> آموزش‌نامه</span>
-        </div>
-        <div className="ln-mock__schedule">
-          <NavIcon name="clock" size={15} />
-          انتشار زمان‌بندی‌شده: امروز، ۱۸:۳۰
         </div>
         <div className="ln-mock__stats">
           <div className="ln-mock__stat"><b>۲٬۴۸۰</b><span>ارسال موفق</span></div>
@@ -352,7 +353,9 @@ export default function Landing() {
           {FEATURES.map((f, i) => (
             <Reveal key={f.title} delay={(i % 3) * 90}>
               <div className="ln-feature" style={{ height: '100%' }}>
-                <div className="ln-feature__icon"><NavIcon name={f.icon} size={24} /></div>
+                <div className="ln-feature__icon ln-feature__icon--art" style={{ background: FEATURE_GRADIENTS[f.icon] }}>
+                  <FeatureArt name={f.icon} />
+                </div>
                 <h3 className="ln-feature__title">{f.title}</h3>
                 <p className="ln-feature__text">{f.text}</p>
               </div>

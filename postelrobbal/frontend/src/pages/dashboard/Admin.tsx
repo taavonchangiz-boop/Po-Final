@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiRequestError, type PlanDto } from '../../lib/api';
 import { Button, Card, ConfirmDialog, EmptyState, Field, Input, Modal, PageLoading, Pagination, Select, StatCard, StatusBadge, Textarea } from '../../components/ui';
 import { faDate, faDateTime, faDigits, faMoney, faNumber } from '../../lib/format';
@@ -794,11 +795,22 @@ export default function Admin() {
 
   return (
     <div>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 21, fontWeight: 800 }}>پنل مدیریت</h1>
-        <p style={{ color: 'var(--text-2)', fontSize: 13.5 }}>
-          {me?.user.role === 'SUPER_ADMIN' ? 'دسترسی کامل مدیریتی' : 'دسترسی پشتیبانی'} — تعداد کلیدهای تنظیمات: {faDigits(settings ? Object.keys(settings).length : 0)}
-        </p>
+      <div style={{ marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: 21, fontWeight: 800 }}>پنل مدیریت</h1>
+          <p style={{ color: 'var(--text-2)', fontSize: 13.5 }}>
+            {me?.user.role === 'SUPER_ADMIN' ? 'دسترسی کامل مدیریتی' : 'دسترسی پشتیبانی'} — تعداد کلیدهای تنظیمات: {faDigits(settings ? Object.keys(settings).length : 0)}
+          </p>
+        </div>
+        {/* Item 4: the admin can also USE the product for their own channels */}
+        <Link to="/dashboard" className="btn btn-primary" style={{ minHeight: 44 }}>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3.5 10.5 12 3.5l8.5 7" />
+            <path d="M5.5 9.6V20h13V9.6" />
+            <path d="M9.5 20v-6h5v6" />
+          </svg>
+          رفتن به داشبورد کاربری
+        </Link>
       </div>
 
       <div role="tablist" aria-label="بخش‌های پنل مدیریت" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>

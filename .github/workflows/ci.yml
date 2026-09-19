@@ -75,7 +75,7 @@ jobs:
           set -euo pipefail
           # Mirrors scripts/release-check.sh — keep both in sync.
           MATCHES=$(grep -rIEn "(sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|xox[bp]-[A-Za-z0-9-]{10,})" \
-            postelrobbal/app/src postelrobbal/frontend/src postelrobbal/database wordpress-plugin postelrobbal/scripts docs assets public_html 2>/dev/null || true)
+            postelrobbal/app/src postelrobbal/frontend/src postelrobbal/database postelrobbal/wordpress-plugin postelrobbal/scripts docs public_html 2>/dev/null || true)
           if [ -n "$MATCHES" ]; then
             echo "SECRET SCAN FAILED:"; echo "$MATCHES"; exit 1
           fi
@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           MATCHES=$(grep -rn --exclude="release-check.sh" "TODO: RELEASE\|FIXME: RELEASE\|XXX: RELEASE" \
-            postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin postelrobbal/database postelrobbal/scripts docs 2>/dev/null || true)
+            postelrobbal/app/src postelrobbal/frontend/src postelrobbal/wordpress-plugin postelrobbal/database postelrobbal/scripts docs 2>/dev/null || true)
           if [ -n "$MATCHES" ]; then
             echo "RELEASE MARKERS FOUND:"; echo "$MATCHES"; exit 1
           fi
@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           MATCHES=$(grep -rEi "from ['\"]next(/|['\"]| )|(nextjs|next\.js)" \
-            postelrobbal/app/src postelrobbal/frontend/src wordpress-plugin 2>/dev/null || true)
+            postelrobbal/app/src postelrobbal/frontend/src postelrobbal/wordpress-plugin 2>/dev/null || true)
           if [ -n "$MATCHES" ]; then
             echo "FORBIDDEN FRAMEWORK REFERENCES:"; echo "$MATCHES"; exit 1
           fi
@@ -113,7 +113,7 @@ jobs:
           while IFS= read -r -d '' f; do
             echo "php -l $f"
             php -l "$f" || STATUS=1
-          done < <(find wordpress-plugin -type f -name '*.php' -print0)
+          done < <(find postelrobbal/wordpress-plugin -type f -name '*.php' -print0)
           # Gate fails if the connector ships syntax errors; an empty plugin dir
           # (no *.php yet) is reported by scripts/release-check.sh instead.
           exit $STATUS

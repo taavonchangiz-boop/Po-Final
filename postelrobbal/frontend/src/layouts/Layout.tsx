@@ -143,6 +143,7 @@ export function LandingLayout() {
               <li><a href="#how">روش استفاده</a></li>
               <li><a href="#pricing">تعرفه‌ها</a></li>
               <li><a href="#faq">سؤالات متداول</a></li>
+              <li><a href="/terms">قوانین و مقررات</a></li>
             </ul>
           </div>
           <div>
@@ -191,6 +192,7 @@ const NAV_ITEMS: Array<{ to: string; icon: NavIconName; label: string; short?: s
   { to: '/dashboard/referrals', icon: 'referrals', label: 'زیرمجموعه‌گیری' },
   { to: '/dashboard/notifications', icon: 'notifications', label: 'اعلان‌ها' },
   { to: '/dashboard/support', icon: 'support', label: 'پشتیبانی و تیکت‌ها', short: 'پشتیبانی' },
+  { to: '/dashboard/help', icon: 'help', label: 'آموزش و راهنما', short: 'آموزش' },
   { to: '/dashboard/settings', icon: 'settings', label: 'تنظیمات حساب', short: 'تنظیمات' },
   { to: '/dashboard/admin', icon: 'admin', label: 'پنل مدیریت', adminOnly: true },
 ];
@@ -200,6 +202,34 @@ const BOTTOM_NAV_ROUTES = ['/dashboard', '/dashboard/posts', '/dashboard/channel
 
 function navMatch(pathname: string, to: string): boolean {
   return to === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(to);
+}
+
+/** Jalali date + 24h clock chip next to the notification bell (item 10).
+ *  Format: «شنبه ۲۸ شهریور ۱۴۰۵ - ۱۹:۱۱» — always 24-hour, never AM/PM. */
+const dashDateFmt = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
+  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+});
+const dashTimeFmt = new Intl.DateTimeFormat('fa-IR', {
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+function ClockChip() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(new Date()), 15000);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <span className="dash-clock" title="تاریخ و ساعت — تقویم شمسی، ساعت ۲۴ ساعته">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.6" />
+        <path d="M12 7.6V12l3 2" />
+      </svg>
+      <span className="dash-clock__date">{dashDateFmt.format(now)}</span>
+      <span className="dash-clock__sep" aria-hidden="true">-</span>
+      <span className="dash-clock__time" dir="ltr">{dashTimeFmt.format(now)}</span>
+    </span>
+  );
 }
 
 /** Authenticated application shell: always-expanded sidebar on desktop,
@@ -327,6 +357,7 @@ export function DashboardLayout() {
             <Logo size={34} />
           </Link>
           <div className="dash-topbar__actions">
+            <ClockChip />
             <div style={{ position: 'relative' }}>
               <button
                 className="dash-iconbtn"
