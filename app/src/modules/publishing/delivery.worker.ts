@@ -14,7 +14,7 @@
  * Permanent / Validation / Authentication / Authorization / Provider / Internal
  * fail immediately (never retried), per the delivery contract.
  */
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import { decryptSecret } from '../../core/crypto.js';
 import { AnalyticsService } from '../../core/events.js';
 import { classifyProviderError, type ErrorClass } from '../../core/errors.js';
@@ -59,6 +59,40 @@ export async function runDeliveryJob(data: DeliveryJobData): Promise<DeliveryJob
     return { status: 'FAILED' };
   }
 
+  // Defensive net: ANY unexpected throw after the claim must transition the
+  // row out of PROCESSING — otherwise it would be wedged forever (no worker
+  // will ever claim it again). Treated as transient: retry with backoff while
+  // attempts remain, else terminal failure.
+  try {
+    return await processClaimedDelivery(deliveryId);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.error('delivery_unexpected_error', { deliveryId, detail });
+    const rows = await db
+      .select({ attempts: deliveries.attempts, maxAttempts: deliveries.maxAttempts, userId: deliveries.userId, postId: deliveries.postId })
+      .from(deliveries)
+      .where(eq(deliveries.id, deliveryId))
+      .limit(1);
+    const row = rows[0];
+    if (row && row.attempts < row.maxAttempts) {
+      return scheduleRetry(deliveryId, row.attempts, 'Transient', 'خطای غیرمنتظره در پردازش ارسال؛ تلاش مجدد انجام می‌شود.');
+    }
+    await markFailed(deliveryId, 'Internal', 'ارسال به کانال ناموفق بود.');
+    if (row) {
+      AnalyticsService.trackEvent({
+        userId: row.userId,
+        type: 'post.failed',
+        subjectType: 'delivery',
+        subjectId: deliveryId,
+        data: { postId: row.postId, errorClass: 'Internal' },
+      });
+      await recalcPostStatus(row.postId);
+    }
+    return { status: 'FAILED' };
+  }
+}
+
+async function processClaimedDelivery(deliveryId: number): Promise<DeliveryJobResult> {
   const rows = await db
     .select({
       delivery: deliveries,
@@ -200,4 +234,30 @@ async function markFailed(deliveryId: number, errorClass: ErrorClass, safeMessag
     .set({ state: 'FAILED', errorClass, lastError: safeMessage, nextAttemptAt: null, updatedAt: new Date() })
     .where(eq(deliveries.id, deliveryId));
   if (silent) logger.warn('delivery_missing_row', { deliveryId });
+}
+
+/**
+ * Reaper (scheduler tick): deliveries wedged in PROCESSING longer than 15
+ * minutes (worker crash mid-send) go back to RETRYING; terminal if attempts
+ * are exhausted. Returns the number of reaped rows.
+ */
+export async function reapStuckDeliveries(): Promise<number> {
+  const staleBefore = new Date(Date.now() - 15 * 60 * 1000);
+  const stuck = await db
+    .select({ id: deliveries.id, attempts: deliveries.attempts, maxAttempts: deliveries.maxAttempts })
+    .from(deliveries)
+    .where(and(eq(deliveries.state, 'PROCESSING'), lt(deliveries.updatedAt, staleBefore)))
+    .limit(50);
+  let reaped = 0;
+  for (const row of stuck) {
+    if (row.attempts < row.maxAttempts) {
+      await scheduleRetry(row.id, row.attempts, 'Transient', 'ارسال متوقف‌شده بازیابی شد؛ تلاش مجدد انجام می‌شود.');
+    } else {
+      await markFailed(row.id, 'Internal', 'ارسال به کانال ناموفق بود.');
+      reaped++;
+      continue;
+    }
+    reaped++;
+  }
+  return reaped;
 }

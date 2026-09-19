@@ -4,7 +4,7 @@
  * SCHEDULED -> PUBLISHING (affectedRows == 0 ⇒ already fired or not schedulable).
  * Recurrence: ONCE -> DONE; DAILY/WEEKLY/MONTHLY -> advance runAt/nextRunAt.
  */
-import { and, asc, eq, inArray, lte } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, ne } from 'drizzle-orm';
 import { AnalyticsService } from '../../core/events.js';
 import { logger } from '../../core/logger.js';
 import { db } from '../../db/client.js';
@@ -35,29 +35,71 @@ export async function runScheduleTick(): Promise<number> {
   let processed = 0;
 
   for (const schedule of due) {
-    // Skip if the post is not awaiting dispatch (already firing/cancelled/...).
+    // Skip if the post is gone; cancel the schedule so it does not hot-loop.
     const postRows = await db.select({ id: posts.id, status: posts.status }).from(posts).where(eq(posts.id, schedule.postId)).limit(1);
     const post = postRows[0];
     if (post === undefined) {
       await db.update(schedules).set({ status: 'CANCELLED', updatedAt: now }).where(eq(schedules.id, schedule.id));
       continue;
     }
-
-    // Idempotency guard: exactly-once firing via the post status transition.
-    const claimed = await db
-      .update(posts)
-      .set({ status: 'PUBLISHING', updatedAt: now })
-      .where(and(eq(posts.id, schedule.postId), eq(posts.status, 'SCHEDULED')));
-    if ((claimed[0]?.affectedRows ?? 0) === 0) {
-      // Post already moved on (previous tick claimed it, or was cancelled).
-      // Finalize the schedule row so it does not hot-loop every minute.
-      if (schedule.recurrence === 'ONCE') {
-        await db.update(schedules).set({ status: 'DONE', lastRunAt: now, nextRunAt: null, updatedAt: now }).where(eq(schedules.id, schedule.id));
-      } else {
-        const next = advance(schedule.recurrence, schedule.runAt);
-        await db.update(schedules).set({ lastRunAt: now, runAt: next, nextRunAt: next, updatedAt: now }).where(eq(schedules.id, schedule.id));
-      }
+    if (post.status === 'CANCELLED') {
+      await db.update(schedules).set({ status: 'CANCELLED', updatedAt: now }).where(eq(schedules.id, schedule.id));
       continue;
+    }
+
+    // Recurring: wait until the previous occurrence is quiescent (no in-flight
+    // sends) before resetting deliveries for the next one — otherwise a
+    // worker could double-send an update that is mid-flight.
+    if (schedule.recurrence !== 'ONCE') {
+      const inflight = await db
+        .select({ id: deliveries.id })
+        .from(deliveries)
+        .where(and(eq(deliveries.postId, schedule.postId), eq(deliveries.state, 'PROCESSING')))
+        .limit(1);
+      if (inflight.length > 0) continue; // retry next tick
+    }
+
+    // Fire guard (idempotent, per-occurrence): optimistic CAS on the schedule
+    // row itself — the exact runAt value acts as the occurrence token. Two
+    // concurrent firings cannot both match the original runAt.
+    const isOnce = schedule.recurrence === 'ONCE';
+    const next = isOnce ? null : advance(schedule.recurrence as 'DAILY' | 'WEEKLY' | 'MONTHLY', schedule.runAt);
+    const fired = await db
+      .update(schedules)
+      .set({
+        status: isOnce ? 'DONE' : 'ACTIVE',
+        lastRunAt: now,
+        runAt: next ?? schedule.runAt,
+        nextRunAt: next,
+        updatedAt: now,
+      })
+      .where(and(eq(schedules.id, schedule.id), eq(schedules.status, 'ACTIVE'), eq(schedules.runAt, schedule.runAt)));
+    if ((fired[0]?.affectedRows ?? 0) === 0) {
+      continue; // already fired by another process
+    }
+
+    if (isOnce) {
+      // Terminal flow: post CAS SCHEDULED -> PUBLISHING (historical guard).
+      await db
+        .update(posts)
+        .set({ status: 'PUBLISHING', updatedAt: now })
+        .where(and(eq(posts.id, schedule.postId), eq(posts.status, 'SCHEDULED')));
+    } else {
+      // Recurring (MAJOR-8 fix): give every non-cancelled delivery a fresh
+      // occurrence — reset state/attempts/result fields, then enqueue.
+      await db
+        .update(deliveries)
+        .set({
+          state: 'PENDING',
+          attempts: 0,
+          nextAttemptAt: null,
+          lastError: null,
+          errorClass: null,
+          providerMessageId: null,
+          sentAt: null,
+          updatedAt: now,
+        })
+        .where(and(eq(deliveries.postId, schedule.postId), ne(deliveries.state, 'CANCELLED')));
     }
 
     // Enqueue due PENDING deliveries for this post.
@@ -74,14 +116,6 @@ export async function runScheduleTick(): Promise<number> {
     if (pending.length === 0) {
       // Nothing to send — settle the post status immediately.
       await recalcPostStatus(schedule.postId);
-    }
-
-    // Advance/finalize the schedule row.
-    if (schedule.recurrence === 'ONCE') {
-      await db.update(schedules).set({ status: 'DONE', lastRunAt: now, nextRunAt: null, updatedAt: now }).where(eq(schedules.id, schedule.id));
-    } else {
-      const next = advance(schedule.recurrence, schedule.runAt);
-      await db.update(schedules).set({ lastRunAt: now, runAt: next, nextRunAt: next, updatedAt: now }).where(eq(schedules.id, schedule.id));
     }
 
     processed++;

@@ -4,7 +4,7 @@
  * AnalyticsService.trackAudit (core/events.ts).
  */
 import { and, count, desc, eq, gt, or, sql } from 'drizzle-orm';
-import { conflict, notFound, validationError } from '../../core/errors.js';
+import { conflict, forbidden, notFound, validationError } from '../../core/errors.js';
 import { AnalyticsService } from '../../core/events.js';
 import { db, withTransaction } from '../../db/client.js';
 import {
@@ -103,12 +103,24 @@ export const AdminService = {
 
   async updateUserRoleStatus(
     actorUserId: number,
+    actorRole: UserRow['role'],
     targetUserId: number,
     patch: { role?: UserRow['role']; status?: UserRow['status'] },
   ): Promise<Record<string, unknown>> {
     const targetRows = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
     const target = targetRows[0];
     if (!target) throw notFound('کاربر یافت نشد.');
+
+    // Privilege-escalation guard (MAJOR-7): only a SUPER_ADMIN may grant or
+    // revoke the SUPER_ADMIN role, and no admin may modify a SUPER_ADMIN
+    // account at all. A plain ADMIN promoting anyone to SUPER_ADMIN is a
+    // request-forgery class escalation — rejected server-side, not just in UI.
+    if (patch.role === 'SUPER_ADMIN' && target.role !== 'SUPER_ADMIN' && actorRole !== 'SUPER_ADMIN') {
+      throw forbidden('تغییر نقش به مدیر ارشد تنها توسط مدیر ارشد ممکن است.');
+    }
+    if (target.role === 'SUPER_ADMIN' && actorRole !== 'SUPER_ADMIN' && actorUserId !== targetUserId) {
+      throw forbidden('حساب‌های مدیر ارشد توسط مدیر ارشد قابل تغییر هستند.');
+    }
 
     if (patch.role !== undefined && patch.role !== target.role) {
       // Never demote the LAST SUPER_ADMIN (checked inside the transaction).

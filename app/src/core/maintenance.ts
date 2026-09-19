@@ -8,10 +8,11 @@
  *  - wp_events older than retention_days.logs
  * Every table is deleted in bounded batches (LIMIT 1000, max 10 rounds).
  */
-import { and, eq, inArray, lt } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import { logger } from './logger.js';
 import { db } from '../db/client.js';
-import { botEvents, deliveries, events, idempotencyKeys, outboxEvents, passwordResets, settings, wpEvents } from '../db/schema.js';
+import { aiJobs, botEvents, deliveries, events, idempotencyKeys, outboxEvents, passwordResets, settings, wpEvents } from '../db/schema.js';
+import { enqueue } from '../queue/queues.js';
 
 const BATCH_SIZE = 1000;
 const MAX_ROUNDS = 10;
@@ -119,4 +120,56 @@ export async function runRetentionTick(): Promise<number> {
 
   logger.info('retention_tick_done', { deletedRows: total, retention });
   return total;
+}
+
+/**
+ * Re-drive tick (MAJOR-9 fix): after a Redis outage, jobs that were accepted
+ * but never enqueued would otherwise stay queued forever. Re-enqueues:
+ *  - AI jobs stuck QUEUED > 5 minutes
+ *  - deliveries PENDING/RETRYING whose nextAttemptAt passed > 5 minutes
+ *  - outbox rows stuck PROCESSING > 10 minutes (crashed dispatcher)
+ * Bounded per tick (50 each). Returns the number of re-driven items.
+ */
+export async function redriveStuckJobs(): Promise<number> {
+  let count = 0;
+  const now = Date.now();
+
+  const staleAi = await db
+    .select({ id: aiJobs.id })
+    .from(aiJobs)
+    .where(and(eq(aiJobs.status, 'QUEUED'), lt(aiJobs.createdAt, new Date(now - 5 * 60 * 1000))))
+    .limit(50);
+  for (const row of staleAi) {
+    if (await enqueue('ai-jobs', 'run', { jobId: row.id })) count++;
+  }
+
+  const staleDeliveries = await db
+    .select({ id: deliveries.id })
+    .from(deliveries)
+    .where(
+      and(
+        inArray(deliveries.state, ['PENDING', 'RETRYING']),
+        // Covers both scheduled retries past due and enqueue-failure rows
+        // whose nextAttemptAt never got set (Redis outage window).
+        or(isNull(deliveries.nextAttemptAt), lt(deliveries.nextAttemptAt, new Date(now - 5 * 60 * 1000))),
+        lt(deliveries.updatedAt, new Date(now - 5 * 60 * 1000)),
+      ),
+    )
+    .limit(50);
+  for (const row of staleDeliveries) {
+    if (await enqueue('deliveries', 'send', { deliveryId: row.id })) count++;
+  }
+
+  const staleOutbox = await db
+    .select({ id: outboxEvents.id })
+    .from(outboxEvents)
+    .where(and(eq(outboxEvents.status, 'PROCESSING'), lt(outboxEvents.availableAt, new Date(now - 10 * 60 * 1000))))
+    .limit(50);
+  for (const row of staleOutbox) {
+    await db.update(outboxEvents).set({ status: 'PENDING' }).where(eq(outboxEvents.id, row.id));
+    count++;
+  }
+
+  if (count > 0) logger.info('redrive_stuck_jobs', { count });
+  return count;
 }

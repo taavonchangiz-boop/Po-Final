@@ -126,7 +126,7 @@ export default function AnalyticsPage() {
   });
   const botNameById = new Map<string, string>();
   for (const bot of botsLite.data?.items ?? []) {
-    botNameById.set(String(bot.id), bot.title ?? `ربات #${String(bot.id)}`);
+    botNameById.set(String(bot.id), bot.title ?? `ربات #${toFa(String(bot.id))}`);
   }
 
   const aiSeries = useQuery({

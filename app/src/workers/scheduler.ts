@@ -16,11 +16,12 @@
  * trying, never crash-looping.
  */
 import { randomToken } from '../core/crypto.js';
-import { runRetentionTick } from '../core/maintenance.js';
+import { redriveStuckJobs, runRetentionTick } from '../core/maintenance.js';
 import { logger } from '../core/logger.js';
 import { pool } from '../db/client.js';
 import { closeRedis, getRedis } from '../security/redis.js';
 import { runScheduleTick } from '../modules/publishing/schedule.jobs.js';
+import { reapStuckDeliveries } from '../modules/publishing/delivery.worker.js';
 // Cross-agent imports (wave 4-b): dictated export shapes; missing files surface
 // as 'Cannot find module' only (orchestrator typechecks after both agents land).
 import { runGoldSchedulerTick } from '../modules/gold/gold.jobs.js';
@@ -93,6 +94,8 @@ async function tick(counter: number): Promise<void> {
   }
   try {
     await safeRun('schedule_tick', () => runScheduleTick());
+    await safeRun('delivery_reaper', () => reapStuckDeliveries());
+    await safeRun('redrive', () => redriveStuckJobs());
     await safeRun('gold_scheduler', () => runGoldSchedulerTick());
     await safeRun('expiry_notice', () => runExpiryNoticeTick());
     await safeRun('daily_stats', () => refreshDailyStats());

@@ -35,7 +35,7 @@ const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 const createPostSchema = z
   .object({
     title: z.string().trim().max(190).optional(),
-    body: z.string().trim().min(1, 'متن پست الزامی است.').max(40_000),
+    body: z.string().trim().min(1, 'متن پست الزامی است.').max(4_000, 'متن پست نمی‌تواند بیش از ۴۰۰۰ کاراکتر باشد (محدودیت سرویس‌دهنده‌ها).'),
     mediaId: z.coerce.number().int().positive().optional(),
     channelIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
     scheduleAt: z.string().datetime({ offset: true }).optional(),
@@ -46,7 +46,7 @@ const createPostSchema = z
 const updatePostSchema = z
   .object({
     title: z.string().trim().max(190).nullable().optional(),
-    body: z.string().trim().min(1, 'متن پست الزامی است.').max(40_000).optional(),
+    body: z.string().trim().min(1, 'متن پست الزامی است.').max(4_000, 'متن پست نمی‌تواند بیش از ۴۰۰۰ کاراکتر باشد (محدودیت سرویس‌دهنده‌ها).').optional(),
     mediaId: z.coerce.number().int().positive().nullable().optional(),
     scheduleAt: z.string().datetime({ offset: true }).nullable().optional(),
     recurrence: recurrenceSchema.optional(),

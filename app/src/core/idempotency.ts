@@ -33,14 +33,18 @@ export async function withIdempotency<T>(
 ): Promise<IdempotencyResult<T>> {
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
-  try {
-    await db.insert(idempotencyKeys).values({ key, scope, userId: userId ?? null, expiresAt });
-  } catch (err) {
-    if (!isDuplicateKeyError(err)) throw err;
+  const claimed = await db
+    .insert(idempotencyKeys)
+    .values({ key, scope, userId: userId ?? null, expiresAt })
+    .catch((err: unknown) => {
+      if (!isDuplicateKeyError(err)) throw err;
+      return null;
+    });
 
+  if (claimed === null) {
     const existing = await db.select().from(idempotencyKeys).where(eq(idempotencyKeys.key, key)).limit(1);
     const row = existing[0];
-    if (!row) throw err;
+    if (!row) throw conflict('درخواست تکراری است. لطفاً کمی بعد تلاش کنید.');
 
     if (row.expiresAt.getTime() <= Date.now()) {
       // Expired-but-unchanged row: reclaim it and run fresh.
@@ -54,8 +58,15 @@ export async function withIdempotency<T>(
     throw conflict('درخواست قبلی با همین کلید هنوز در حال پردازش است. لطفاً کمی بعد تلاش کنید.');
   }
 
-  const value = await fn();
-  const serialized = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-  await db.update(idempotencyKeys).set({ response: serialized }).where(eq(idempotencyKeys.key, key));
-  return { replayed: false, value };
+  try {
+    const value = await fn();
+    const serialized = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    await db.update(idempotencyKeys).set({ response: serialized }).where(eq(idempotencyKeys.key, key));
+    return { replayed: false, value };
+  } catch (err) {
+    // Release the claim so a legitimate retry can run; otherwise a failed
+    // operation would stay wedged until TTL (money-integrity hazard).
+    await db.delete(idempotencyKeys).where(eq(idempotencyKeys.key, key)).catch(() => undefined);
+    throw err;
+  }
 }

@@ -7,7 +7,7 @@
  * agreed provider contract; offsets are kept in a process-local Map (single
  * scheduler instance per deployment — ARCHITECTURE.md §6).
  */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { decryptSecret } from '../../core/crypto.js';
 import { logger } from '../../core/logger.js';
 import { db } from '../../db/client.js';
@@ -78,14 +78,25 @@ function readRawUpdateId(envelope: UpdateEnvelope): number | null {
 }
 
 /**
- * Scheduler tick: poll every ACTIVE, enabled bot whose webhookState is POLLING.
- * Returns the total number of freshly ingested updates.
+ * Scheduler tick: poll every ACTIVE, enabled bot that is NOT webhook-fed.
+ * POLLING = explicit polling mode (Bale/Rubika policy + failed registration).
+ * UNREGISTERED / FAILED = freshly created bots (no webhook yet) — polling them
+ * here prevents a dead window between creation and webhook registration.
+ * Telegram conflict (409) is impossible for REGISTERED bots (excluded) and
+ * harmless otherwise; dedupe (uq bot_events.external_event_id) makes any
+ * overlap safe. Returns the total number of freshly ingested updates.
  */
 export async function pollActiveBots(): Promise<number> {
   const rows = await db
     .select()
     .from(bots)
-    .where(and(eq(bots.status, 'ACTIVE'), eq(bots.isEnabled, true), eq(bots.webhookState, 'POLLING')))
+    .where(
+      and(
+        eq(bots.status, 'ACTIVE'),
+        eq(bots.isEnabled, true),
+        inArray(bots.webhookState, ['POLLING', 'UNREGISTERED', 'FAILED']),
+      ),
+    )
     .limit(MAX_BOTS_PER_TICK);
 
   let total = 0;

@@ -52,7 +52,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       .safeParse(request.body);
     if (!parsed.success) throw validationError('داده‌های ورودی معتبر نیستند.', parsed.error.flatten());
 
-    const user = await AdminService.updateUserRoleStatus(request.currentUser!.id, params.data.id, parsed.data);
+    const user = await AdminService.updateUserRoleStatus(request.currentUser!.id, request.currentUser!.role, params.data.id, parsed.data);
     return sendOk(reply, { user });
   });
 

@@ -133,7 +133,7 @@ function idpayGateway(): PaymentGateway {
       }
       return { redirectUrl: record.link, authority: record.id };
     },
-    async verify(authorityOrRef, _amount, context) {
+    async verify(authorityOrRef, expectedAmount, context) {
       // IDPay verify is authoritative only with the ORIGINAL order_id.
       const orderId = context?.orderId;
       if (!orderId) return { ok: false, raw: { error: 'missing order_id' } };
@@ -142,9 +142,16 @@ function idpayGateway(): PaymentGateway {
         { id: authorityOrRef, order_id: orderId },
         { 'X-API-KEY': apiKey },
       );
-      const record = json as { status?: number; track_id?: number | string } | null;
+      const record = json as { status?: number; amount?: number | string; track_id?: number | string } | null;
       // status 100 = paid, 101 = already settled, 200 = settled to bank.
       if (status === 200 && record && (record.status === 100 || record.status === 101 || record.status === 200)) {
+        // Amount integrity: the gateway-reported amount MUST equal the local
+        // payment amount (MAJOR-5 — never credit a payer-edited amount).
+        const reportedAmount = Number(record.amount);
+        if (Number.isFinite(reportedAmount) && reportedAmount !== expectedAmount) {
+          logger.error('gateway_idpay_amount_mismatch', { expectedAmount, reportedAmount });
+          return { ok: false, raw: { error: 'amount_mismatch', expectedAmount, reportedAmount } };
+        }
         return { ok: true, refId: record.track_id !== undefined ? String(record.track_id) : undefined, raw: json };
       }
       return { ok: false, raw: json };
@@ -174,11 +181,17 @@ function zibalGateway(): PaymentGateway {
       }
       return { redirectUrl: `https://gateway.zibal.ir/${record.trackId}`, authority: String(record.trackId) };
     },
-    async verify(authorityOrRef, _amount) {
+    async verify(authorityOrRef, expectedAmount) {
       const { status, json } = await postJson(`${base}/verify`, { merchant, trackId: Number(authorityOrRef) });
-      const record = json as { result?: number; status?: number } | null;
+      const record = json as { result?: number; status?: number; amount?: number | string } | null;
       // result 100 = verified; status 1 = paid, 2 = paid & already verified.
       if (status === 200 && record?.result === 100 && (record.status === 1 || record.status === 2)) {
+        // Amount integrity (MAJOR-5): compare gateway-reported amount.
+        const reportedAmount = Number(record.amount);
+        if (Number.isFinite(reportedAmount) && reportedAmount !== expectedAmount) {
+          logger.error('gateway_zibal_amount_mismatch', { expectedAmount, reportedAmount });
+          return { ok: false, raw: { error: 'amount_mismatch', expectedAmount, reportedAmount } };
+        }
         return { ok: true, refId: authorityOrRef, raw: json };
       }
       return { ok: false, raw: json };
@@ -195,6 +208,11 @@ function zibalGateway(): PaymentGateway {
  * via PAYMENT_PROVIDER=MOCK (a loud warning is logged in production).
  */
 function mockGateway(): PaymentGateway {
+  if (env.isProduction && env.ALLOW_MOCK_PAYMENTS !== 'true') {
+    // MAJOR-6: fail fast — MOCK auto-verifies payments and must never run in
+    // production without an explicit, deliberate escape hatch.
+    throw paymentError('درگاه پرداخت آزمایشی در محیط عملیاتی مجاز نیست. درگاه واقعی را پیکربندی کنید.');
+  }
   return {
     name: 'MOCK',
     async createPayment(amount, callbackUrl, description) {

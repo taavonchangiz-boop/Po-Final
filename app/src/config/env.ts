@@ -62,6 +62,8 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   STORAGE_DIR: z.string().default('../storage'),
   SEED_TOKEN: z.string().optional(),
+  /** Deliberate escape hatch for MOCK payment gateway in production (tests/demo only). */
+  ALLOW_MOCK_PAYMENTS: z.enum(['true', 'false']).default('false'),
 });
 
 export type Env = Readonly<

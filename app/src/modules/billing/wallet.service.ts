@@ -86,13 +86,27 @@ export const WalletService = {
 
   /**
    * Credit (or debit) the wallet inside the CALLER's transaction.
-   * The idempotencyKey makes the ledger insert idempotent: a duplicate key
-   * (ER_DUP_ENTRY) means the move already happened and is skipped silently.
+   * Idempotent per idempotencyKey: an existing ledger row short-circuits the
+   * move (skipped). The balance update happens ONLY together with the ledger
+   * insert — if a concurrent duplicate insert loses the race we THROW so the
+   * caller's transaction rolls back fully (never a double-applied balance);
+   * any retry then hits the ledger short-circuit above.
    */
   async move(tx: DbExecutor, input: WalletMoveInput): Promise<{ balance: number; skipped: boolean }> {
     if (!Number.isInteger(input.amount) || input.amount <= 0) {
       throw paymentError('مبلغ نامعتبر است.');
     }
+
+    // 1) Replay check BEFORE mutating anything.
+    const existingRows = await tx
+      .select({ balanceAfter: walletEntries.balanceAfter })
+      .from(walletEntries)
+      .where(eq(walletEntries.idempotencyKey, input.idempotencyKey.slice(0, 120)))
+      .limit(1);
+    const existing = existingRows[0];
+    if (existing) return { balance: existing.balanceAfter, skipped: true };
+
+    // 2) Lock, compute, apply.
     const current = await lockedBalance(tx, input.userId);
     const next = input.direction === 'CREDIT' ? current + input.amount : current - input.amount;
     if (next < 0) throw paymentError('موجودی کیف پول کافی نیست.');
@@ -102,24 +116,17 @@ export const WalletService = {
       .set({ balance: next, updatedAt: new Date() })
       .where(eq(wallets.userId, input.userId));
 
-    try {
-      await tx.insert(walletEntries).values({
-        userId: input.userId,
-        direction: input.direction,
-        type: input.type,
-        amount: input.amount,
-        balanceAfter: next,
-        referenceType: input.referenceType?.slice(0, 40),
-        referenceId: input.referenceId ?? null,
-        description: input.description?.slice(0, 255),
-        idempotencyKey: input.idempotencyKey.slice(0, 120),
-      });
-    } catch (err) {
-      if (isDuplicateKeyError(err)) {
-        return { balance: current, skipped: true };
-      }
-      throw err;
-    }
+    await tx.insert(walletEntries).values({
+      userId: input.userId,
+      direction: input.direction,
+      type: input.type,
+      amount: input.amount,
+      balanceAfter: next,
+      referenceType: input.referenceType?.slice(0, 40),
+      referenceId: input.referenceId ?? null,
+      description: input.description?.slice(0, 255),
+      idempotencyKey: input.idempotencyKey.slice(0, 120),
+    });
 
     return { balance: next, skipped: false };
   },

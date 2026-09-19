@@ -73,6 +73,9 @@ export async function createPost(userId: number, input: CreatePostInput): Promis
 
   // --- channels: must exist, be owned and not disconnected -----------------
   const uniqueChannelIds = [...new Set(input.channelIds)];
+  if (uniqueChannelIds.length === 0) {
+    throw validationError('حداقل یک کانال برای انتشار انتخاب کنید.');
+  }
   const channelRows = await listUsableChannels(userId, uniqueChannelIds);
   if (channelRows.length !== uniqueChannelIds.length) {
     throw validationError('یک یا چند کانال انتخاب‌شده معتبر نیست.');
@@ -376,10 +379,14 @@ export async function publishNow(userId: number, postId: number, channelIds?: nu
         .set({ status: 'PUBLISHING', updatedAt: new Date() })
         .where(and(eq(posts.id, postId), sql`${posts.status} <> 'CANCELLED'`));
 
+      // Debounce-only TTL (MAJOR-11 fix): protects against double-clicks and
+      // burst retries, but short enough that legitimately added channels are
+      // picked up on the next publish-now. Per-channel exactly-once is already
+      // guaranteed downstream by the delivery CAS claim (PENDING/RETRYING only).
       const pending = await db
         .select({ id: deliveries.id })
         .from(deliveries)
-        .where(and(eq(deliveries.postId, postId), eq(deliveries.state, 'PENDING')));
+        .where(and(eq(deliveries.postId, postId), inArray(deliveries.state, ['PENDING', 'RETRYING'])));
 
       let enqueued = 0;
       for (const d of pending) {
@@ -388,7 +395,7 @@ export async function publishNow(userId: number, postId: number, channelIds?: nu
       }
       return { postId, enqueued };
     },
-    86_400,
+    60,
     userId,
   );
 

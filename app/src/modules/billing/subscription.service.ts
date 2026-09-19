@@ -195,7 +195,17 @@ export const SubscriptionService = {
     }
 
     const expiresAt = new Date(base);
-    expiresAt.setMonth(expiresAt.getMonth() + Math.max(1, months));
+    // Day-clamped month arithmetic: Jan 31 + 1 month = Feb 28/29, not Mar 3.
+    {
+      const day = expiresAt.getUTCDate();
+      const targetYear = expiresAt.getUTCFullYear();
+      const targetMonth = expiresAt.getUTCMonth() + Math.max(1, months);
+      const daysInTarget = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+      expiresAt.setUTCDate(1);
+      expiresAt.setUTCMonth(targetMonth);
+      expiresAt.setUTCFullYear(targetYear);
+      expiresAt.setUTCDate(Math.min(day, daysInTarget));
+    }
 
     const inserted = await tx
       .insert(subscriptions)

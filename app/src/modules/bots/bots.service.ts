@@ -255,7 +255,13 @@ export const BotService = {
     const provider = getBotProvider(kind, decryptSecret(bot.tokenEncrypted));
 
     let webhookState: BotRow['webhookState'] = bot.webhookState;
-    if (provider.capabilities.webhookRegistration) {
+    // Webhook registration policy: TELEGRAM only — its Bot API verifies our
+    // per-bot secret via the X-Telegram-Bot-Api-Secret-Token header. Bale's
+    // webhook does not reliably deliver a verifiable secret (audited reference
+    // behavior), so Bale bots run in POLLING mode; Rubika has no webhook at
+    // all (capability map). Best-effort deleteWebhook clears stale provider
+    // registrations before switching a bot to polling.
+    if (kind === 'TELEGRAM') {
       let registered = false;
       try {
         const result = await provider.setWebhook(webhookUrlFor(kind, bot.id), bot.webhookSecret);
@@ -271,6 +277,11 @@ export const BotService = {
       }
       webhookState = registered ? 'REGISTERED' : 'POLLING';
     } else {
+      try {
+        await provider.deleteWebhook();
+      } catch {
+        // Polling still works; provider-side webhook (if any) is stale.
+      }
       webhookState = 'POLLING';
     }
 

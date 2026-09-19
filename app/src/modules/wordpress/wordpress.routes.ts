@@ -9,6 +9,7 @@
  * X-Postyar-Event-Id and processes: product.published → DRAFT post +
  * notification; product.updated → upsert + price notification; ping → CONNECTED.
  */
+import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -225,7 +226,11 @@ export function registerWordpressRoutes(app: FastifyInstance): void {
           });
         }
 
-        const eventId = readHeader(request, 'x-postyar-event-id') ?? null;
+        const eventId =
+          readHeader(request, 'x-postyar-event-id') ??
+          // Missing header: derive a stable-per-request id from body+timestamp
+          // so a NULL dedupe key cannot collapse unrelated events.
+          createHash('sha256').update(rawBody).update(readHeader(request, 'x-postyar-timestamp') ?? '').digest('hex');
         let eventType = 'unknown';
         let payload: Record<string, unknown> = {};
         try {

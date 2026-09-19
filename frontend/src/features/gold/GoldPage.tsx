@@ -454,7 +454,7 @@ export default function GoldPage() {
             </option>
             {channelOptions.map((c) => (
               <option key={String(c.id)} value={String(c.id)}>
-                {c.title || `کانال #${String(c.id)}`}
+                {c.title || `کانال #${toFa(String(c.id))}`}
               </option>
             ))}
           </Select>
