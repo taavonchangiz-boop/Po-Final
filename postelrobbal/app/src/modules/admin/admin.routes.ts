@@ -14,14 +14,32 @@ import {
   rejectPayment,
   listAuditLogs,
   listPlans,
+  createPlan,
   updatePlan,
+  deletePlan,
   getSettings,
   putSettings,
   getPaymentState,
   broadcast,
   releaseChannel,
+  listChannels,
+  listBots,
+  type AdminPlatform,
 } from './admin.service.js';
-import { putPaymentSettings, PAYMENT_SETTING_KEYS } from '../payments/payment-settings.service.js';
+import {
+  getPaymentSettings,
+  putPaymentSettings,
+  PAYMENT_SETTING_KEYS,
+  type PaymentSettingsPatch,
+  type GatewayPatch,
+} from '../payments/payment-settings.service.js';
+import {
+  getSmsSettings,
+  putSmsSettings,
+  getEmailSettings,
+  putEmailSettings,
+  sendTestEmail,
+} from './system-settings.service.js';
 
 function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
   return parseWith(schema, body);
@@ -43,6 +61,12 @@ function paging(query: Record<string, string | undefined>): { page: number; page
   return { page, pageSize };
 }
 
+function platformQuery(value: string | undefined): AdminPlatform | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (value === 'telegram' || value === 'bale' || value === 'rubika') return value;
+  throw new AppError(ERR.VALIDATION('مقدار انتخابی معتبر نیست.'));
+}
+
 const grantSchema = z.object({
   planCode: z.string().min(1).max(40),
   months: z.coerce.number().int().min(1).max(12),
@@ -50,6 +74,16 @@ const grantSchema = z.object({
 const planPatchSchema = z.object({
   nameFa: z.string().min(1).max(80).optional(),
   priceRial: z.coerce.number().int().min(0).optional(),
+  periodDays: z.coerce.number().int().min(1).max(3650).optional(),
+  isActive: z.boolean().optional(),
+  limitsJson: z.record(z.unknown()).optional(),
+  featuresJson: z.record(z.unknown()).optional(),
+});
+const planCreateSchema = z.object({
+  code: z.string().min(2).max(40).regex(/^[a-z0-9_-]+$/),
+  nameFa: z.string().min(2).max(80),
+  priceRial: z.coerce.number().int().min(0),
+  periodDays: z.coerce.number().int().min(1).max(3650).default(30),
   limitsJson: z.record(z.unknown()).optional(),
   featuresJson: z.record(z.unknown()).optional(),
 });
@@ -65,6 +99,36 @@ const paymentCardSchema = z.object({
   cardNumber: z.string().regex(/^\d{16,24}$/),
   holderName: z.string().min(1).max(80),
 });
+
+// Per-provider gateway credentials (admin-panel v2). Strict: numbers never
+// coerce to strings; unknown keys/providers are rejected.
+const gatewaysPatchSchema = z
+  .object({
+    zibal: z
+      .object({ merchantId: z.string().max(128).optional(), sandbox: z.boolean().optional() })
+      .strict()
+      .optional(),
+    zarinpal: z
+      .object({ merchantId: z.string().max(128).optional(), sandbox: z.boolean().optional() })
+      .strict()
+      .optional(),
+    idpay: z
+      .object({ apiKey: z.string().max(128).optional(), sandbox: z.boolean().optional() })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+// Dedicated payment-settings PUT body (new admin UI contract).
+const paymentSettingsPutSchema = z
+  .object({
+    onlineEnabled: z.boolean().optional(),
+    cardToCardEnabled: z.boolean().optional(),
+    provider: z.enum(['zibal', 'zarinpal', 'idpay']).optional(),
+    gateways: gatewaysPatchSchema.optional(),
+    cards: paymentCardSchema.array().min(1).max(5).optional(),
+  })
+  .strict();
 const approvePaymentSchema = z.object({
   note: z.string().min(1).max(500).optional(),
 });
@@ -80,6 +144,54 @@ const releaseSchema = z.object({
   channelRef: z.string().min(1).max(190),
 });
 
+// ---- sms / email settings (system-settings.service) ----
+const smsirConfigSchema = z
+  .object({ apiKey: z.string().max(128).optional(), line: z.string().max(128).optional(), otpTemplateId: z.string().max(20).optional() })
+  .strict();
+const melipayamakConfigSchema = z
+  .object({ username: z.string().max(128).optional(), password: z.string().max(128).optional(), from: z.string().max(128).optional() })
+  .strict();
+const kavenegarConfigSchema = z
+  .object({ apiKey: z.string().max(128).optional(), from: z.string().max(128).optional() })
+  .strict();
+const ghasedakConfigSchema = z
+  .object({ apiKey: z.string().max(128).optional(), line: z.string().max(128).optional() })
+  .strict();
+const smsPutSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    provider: z.enum(['smsir', 'melipayamak', 'kavenegar', 'ghasedak']).optional(),
+    configs: z
+      .object({
+        smsir: smsirConfigSchema.optional(),
+        melipayamak: melipayamakConfigSchema.optional(),
+        kavenegar: kavenegarConfigSchema.optional(),
+        ghasedak: ghasedakConfigSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+const emailPutSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    host: z.string().max(190).optional(),
+    port: z.coerce.number().int().min(1).max(65535).optional(),
+    secure: z.boolean().optional(),
+    user: z.string().max(190).optional(),
+    pass: z.string().max(190).optional(),
+    fromName: z.string().max(80).optional(),
+    fromEmail: z
+      .string()
+      .max(190)
+      .refine((v) => v === '' || v.includes('@'), { message: 'ایمیل معتبر نیست.' })
+      .optional(),
+  })
+  .strict();
+const emailTestSchema = z.object({
+  to: z.string().min(3).max(190).email(),
+});
+
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   // Every admin route requires admin.access; sensitive groups declare a finer permission.
   const access = { preHandler: [app.requirePermission('admin.access')] };
@@ -90,6 +202,23 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/admin/overview', access, async () => {
     const data = await getOverview();
+    return { success: true, data };
+  });
+
+  // ---- channels / bots (admin-panel v2 list endpoints) ----
+  app.get('/admin/channels', access, async (req) => {
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    const { page, pageSize } = paging(q);
+    const platform = platformQuery(q.platform);
+    const data = await listChannels(q.search, platform, page, pageSize);
+    return { success: true, data };
+  });
+
+  app.get('/admin/bots', access, async (req) => {
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    const { page, pageSize } = paging(q);
+    const platform = platformQuery(q.platform);
+    const data = await listBots(q.search, platform, page, pageSize);
     return { success: true, data };
   });
 
@@ -193,6 +322,22 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { success: true, data: { plans: data } };
   });
 
+  app.post('/admin/plans', plansManage, async (req) => {
+    const me = auth(req);
+    const input = parse(planCreateSchema, req.body);
+    const data = await createPlan(input);
+    await audit({
+      action: 'admin.plan_created',
+      actorId: me.id,
+      actorRole: me.role,
+      subjectType: 'plan',
+      subjectId: data.id,
+      ip: req.ip,
+      meta: { code: input.code },
+    });
+    return { success: true, data };
+  });
+
   app.put('/admin/plans/:id', plansManage, async (req) => {
     const me = auth(req);
     const id = paramId(req);
@@ -206,6 +351,21 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       subjectId: id,
       ip: req.ip,
       meta: { fields: Object.keys(input) },
+    });
+    return { success: true, data: { ok: true } };
+  });
+
+  app.delete('/admin/plans/:id', plansManage, async (req) => {
+    const me = auth(req);
+    const id = paramId(req);
+    await deletePlan(id);
+    await audit({
+      action: 'admin.plan_deleted',
+      actorId: me.id,
+      actorRole: me.role,
+      subjectType: 'plan',
+      subjectId: id,
+      ip: req.ip,
     });
     return { success: true, data: { ok: true } };
   });
@@ -238,17 +398,26 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         paymentOnlineEnabled?: unknown;
         paymentCardToCardEnabled?: unknown;
         paymentProvider?: unknown;
+        paymentGateways?: unknown;
         cardToCardCards?: unknown;
       };
       const coerced: {
         paymentOnlineEnabled?: boolean;
         paymentCardToCardEnabled?: boolean;
         paymentProvider?: 'zarinpal';
+        paymentGateways?: GatewayPatch;
         cardToCardCards?: Array<{ id?: string; bankName: string; cardNumber: string; holderName: string }>;
       } = {};
       if (typeof patch.paymentOnlineEnabled === 'boolean') coerced.paymentOnlineEnabled = patch.paymentOnlineEnabled;
       if (typeof patch.paymentCardToCardEnabled === 'boolean') coerced.paymentCardToCardEnabled = patch.paymentCardToCardEnabled;
       if (patch.paymentProvider === 'zarinpal') coerced.paymentProvider = 'zarinpal';
+      if (
+        patch.paymentGateways !== undefined &&
+        typeof patch.paymentGateways === 'object' &&
+        !Array.isArray(patch.paymentGateways)
+      ) {
+        coerced.paymentGateways = parse(gatewaysPatchSchema, patch.paymentGateways);
+      }
       if (Array.isArray(patch.cardToCardCards)) coerced.cardToCardCards = parse(paymentCardSchema.array().min(1).max(5), patch.cardToCardCards);
       if (Object.keys(coerced).length > 0) {
         const keys = await putPaymentSettings(coerced);
@@ -269,6 +438,79 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       meta: { keys: updatedKeys },
     });
     return { success: true, data: { updated } };
+  });
+
+  // ---- dedicated payment-gateway settings (admin-panel v2) ----
+  app.get('/admin/settings/payments', settingsManage, async () => {
+    const data = await getPaymentSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/payments', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(paymentSettingsPutSchema, req.body);
+    const patch: PaymentSettingsPatch = {};
+    if (input.onlineEnabled !== undefined) patch.paymentOnlineEnabled = input.onlineEnabled;
+    if (input.cardToCardEnabled !== undefined) patch.paymentCardToCardEnabled = input.cardToCardEnabled;
+    if (input.provider !== undefined) patch.paymentProvider = input.provider;
+    if (input.gateways !== undefined) patch.paymentGateways = input.gateways;
+    if (input.cards !== undefined) patch.cardToCardCards = input.cards;
+    const keys = await putPaymentSettings(patch);
+    await audit({
+      action: 'admin.settings_updated',
+      actorId: me.id,
+      actorRole: me.role,
+      ip: req.ip,
+      meta: { keys },
+    });
+    return { success: true, data: { updated: keys.length } };
+  });
+
+  // ---- sms settings (admin-panel v2) ----
+  app.get('/admin/settings/sms', settingsManage, async () => {
+    const data = await getSmsSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/sms', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(smsPutSchema, req.body);
+    const keys = await putSmsSettings(input);
+    await audit({
+      action: 'admin.settings_updated',
+      actorId: me.id,
+      actorRole: me.role,
+      ip: req.ip,
+      meta: { keys },
+    });
+    return { success: true, data: { updated: keys.length } };
+  });
+
+  // ---- email (SMTP) settings (admin-panel v2) ----
+  app.get('/admin/settings/email', settingsManage, async () => {
+    const data = await getEmailSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/email', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(emailPutSchema, req.body);
+    const keys = await putEmailSettings(input);
+    await audit({
+      action: 'admin.settings_updated',
+      actorId: me.id,
+      actorRole: me.role,
+      ip: req.ip,
+      meta: { keys },
+    });
+    return { success: true, data: { updated: keys.length } };
+  });
+
+  app.post('/admin/settings/email/test', settingsManage, async (req) => {
+    const me = auth(req);
+    const input = parse(emailTestSchema, req.body);
+    const data = await sendTestEmail(me.id, input.to);
+    return { success: true, data };
   });
 
   // ---- broadcast ----

@@ -117,6 +117,10 @@ export async function registerPaymentRoutes(app: FastifyInstance): Promise<void>
       paymentId,
       Authority: query.Authority,
       Status: query.Status,
+      // zibal/idpay callbacks carry their own params (trackId mirrors our
+      // stored authority; status is the gateway-reported state).
+      trackId: query.trackId,
+      status: query.status,
     });
     const flag = result.ok ? 'ok' : 'failed';
     return reply.redirect(`${env.APP_URL}/dashboard/wallet?payment=${flag}`);

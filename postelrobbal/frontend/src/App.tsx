@@ -26,7 +26,19 @@ const Referrals = lazy(() => import('./pages/dashboard/Referrals'));
 const Notifications = lazy(() => import('./pages/dashboard/Notifications'));
 const Settings = lazy(() => import('./pages/dashboard/Settings'));
 const Support = lazy(() => import('./pages/dashboard/Support'));
-const Admin = lazy(() => import('./pages/dashboard/Admin'));
+const AdminLayout = lazy(() => import('./layouts/AdminLayout'));
+const AdminHome = lazy(() => import('./pages/admin/AdminHome'));
+const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
+const AdminPlans = lazy(() => import('./pages/admin/AdminPlans'));
+const AdminPayments = lazy(() => import('./pages/admin/AdminPayments'));
+const AdminGateways = lazy(() => import('./pages/admin/AdminGateways'));
+const AdminSms = lazy(() => import('./pages/admin/AdminSms'));
+const AdminEmail = lazy(() => import('./pages/admin/AdminEmail'));
+const AdminChannels = lazy(() => import('./pages/admin/AdminChannels'));
+const AdminBots = lazy(() => import('./pages/admin/AdminBots'));
+const AdminBroadcast = lazy(() => import('./pages/admin/AdminBroadcast'));
+const AdminLogs = lazy(() => import('./pages/admin/AdminLogs'));
+const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const PaymentResult = lazy(() => import('./pages/PaymentResult'));
 
 export function App() {
@@ -60,7 +72,20 @@ export function App() {
           <Route path="settings" element={<Settings />} />
           <Route path="support" element={<Support />} />
           <Route path="help" element={<Help />} />
-          <Route path="admin" element={<Admin />} />
+          <Route path="admin" element={<AdminLayout />}>
+            <Route index element={<AdminHome />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="plans" element={<AdminPlans />} />
+            <Route path="payments" element={<AdminPayments />} />
+            <Route path="gateways" element={<AdminGateways />} />
+            <Route path="sms" element={<AdminSms />} />
+            <Route path="email" element={<AdminEmail />} />
+            <Route path="channels" element={<AdminChannels />} />
+            <Route path="bots" element={<AdminBots />} />
+            <Route path="broadcast" element={<AdminBroadcast />} />
+            <Route path="logs" element={<AdminLogs />} />
+            <Route path="settings" element={<AdminSettings />} />
+          </Route>
         </Route>
       </Routes>
     </Suspense>

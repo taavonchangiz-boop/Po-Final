@@ -1,0 +1,30 @@
+# Postyar SPA (public_html) — browser assets only (§55).
+# This file lives in the Vite public/ dir so every build re-emits it here.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # API and health endpoints are served by the Node app (Passenger mount at
+  # /api, or a local reverse proxy). Never fall back to the SPA index.
+  RewriteCond %{REQUEST_URI} ^/(api|health)(/|$)
+  RewriteRule . - [L]
+
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>
+
+# Never list or expose hidden files.
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>
+
+# Long-cache hashed build assets.
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>

@@ -52,3 +52,22 @@ Date: 2025 · Status: initial production release of the rebuilt SaaS (independen
 12. **Tutorial page** at `/dashboard/help` — 10-step guide built from real application screenshots, visible only inside the user dashboard.
 13. **Anti-bot captcha**: server-side SVG captcha (svg-captcha + Redis, one-time codes, 5-min TTL) enforced on login & registration with a graphical glass widget matching the forms.
 14. **SPA base fix (root cause)**: Vite `base` switched from `./` to `/` — nested routes (e.g. `/dashboard/posts/new`) previously resolved bundle URLs document-relative and could render a blank page; absolute paths now work at every depth (preview rewrites + `.htaccess` updated accordingly).
+
+## v1.3.0 — admin panel completion (2026-09-19 / ۲۸ شهریور ۱۴۰۵)
+
+The admin area was a single page with 5 tabs; it is now a full multi-section management panel.
+
+**Admin panel (nested routes under `/dashboard/admin`, own sidebar + role guard, «بازگشت به پیشخوان» toggle both ways)**
+1. **داشبورد مدیریت** — full stats: users (total/active/suspended/new-30d), channels & bots per platform (Telegram/Bale/Rubika + active), Gold-bot (configs/enabled/snapshots-24h), posts (scheduled/published-30d/failed-24h), payments (verified-30d/total/pending-review), active subscriptions per plan, usage (AI jobs, media+storage, open tickets, deliveries-24h).
+2. **کاربران** — search, suspend/activate, gift subscription.
+3. **اشتراک‌ها (پلن‌ها)** — full plan CRUD: create, edit (limits/features/price/period), activate/deactivate, delete (refused while subscriptions reference the plan, with a clear Persian error).
+4. **درگاه پرداخت** — online + card-to-card toggles; default gateway selector with **زیبال as the default** (زرین‌پال، آیدی‌پی also available); selecting a gateway reveals ITS settings (merchant ID / API key + sandbox); card-to-card cards editor (≤5).
+5. **پیامک** — provider selector: **sms.ir default** + ملی پیامک، کاوه‌نگار، قاصدک; per-provider credentials revealed on selection.
+6. **ایمیل** — SMTP settings (host/port/secure/user/pass/from) + live test-send endpoint (nodemailer).
+7. **کانال‌ها / ربات‌ها** — global lists with owner join, platform filters, registry release.
+8. **پرداخت‌ها / اطلاع‌رسانی / گزارش رویداد / تنظیمات عمومی** — review queue, broadcast, audit log, generic settings editor (payment/sms/email keys excluded — they live in their own sections).
+
+**Backend**
+- `GET /admin/overview` rewritten (nested shape); `GET /admin/channels`, `GET /admin/bots`; `POST/DELETE /admin/plans` (PUT extended); dedicated `GET/PUT /admin/settings/payments|sms|email` + `POST /admin/settings/email/test`; new gateway adapters `zibal.ts` / `idpay.ts`; `paymentProvider` default switched to `zibal`; new `paymentGateways` settings key with per-provider config merge.
+- **Root-cause fixes**: (a) admin overview fired 27 concurrent queries against a pool with `queueLimit: 20` → mysql2 "Queue limit reached"; queries now run with bounded concurrency (5). (b) `gold_snapshots.capturedAt` was mapped to the wrong column by the shared `ts()` helper (`created_at`) — the Gold feature's snapshot lookup would crash at runtime; schema mapping corrected to `captured_at`.
+- `.htaccess` restored (it had been wiped from `public_html/` by an earlier `--emptyOutDir` build) and now ships inside the Vite `public/` dir so every build re-emits it (SPA fallback + api/health passthrough + hidden-file deny + asset caching).

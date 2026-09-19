@@ -1,18 +1,19 @@
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { systemSettings } from '../../db/schema.js';
 import { newId } from '../../core/ids.js';
+import { AppError, ERR } from '../../core/errors.js';
 
 /**
- * Admin-togglable payment gateway settings (migration 0003).
+ * Admin-togglable payment gateway settings (migration 0003 + admin-panel v2).
  *
  * Storage contract: one system_settings row per key, value_json holds a NATIVE
- * JSON document (boolean / string / array) keyed exactly like the API field
- * names — paymentOnlineEnabled, paymentCardToCardEnabled, paymentProvider,
- * cardToCardCards. The drizzle $type<Record<string, unknown>>() annotation on
- * value_json only models the legacy object-shaped keys; the narrow casts below
- * are deliberate and documented because a real JSON column accepts any JSON
- * value and mysql2 parses it back to its native type.
+ * JSON document (boolean / string / array / object) keyed exactly like the API
+ * field names — paymentOnlineEnabled, paymentCardToCardEnabled, paymentProvider,
+ * paymentGateways, cardToCardCards. The drizzle $type<Record<string, unknown>>()
+ * annotation on value_json only models the legacy object-shaped keys; the narrow
+ * casts below are deliberate and documented because a real JSON column accepts
+ * any JSON value and mysql2 parses it back to its native type.
  */
 
 export interface CardToCardCard {
@@ -22,10 +23,30 @@ export interface CardToCardCard {
   holderName: string;
 }
 
+export interface ZibalGatewayConfig {
+  merchantId: string;
+  sandbox: boolean;
+}
+export interface ZarinpalGatewayConfig {
+  merchantId: string;
+  sandbox: boolean;
+}
+export interface IdpayGatewayConfig {
+  apiKey: string;
+  sandbox: boolean;
+}
+
+export interface GatewayConfigs {
+  zibal: ZibalGatewayConfig;
+  zarinpal: ZarinpalGatewayConfig;
+  idpay: IdpayGatewayConfig;
+}
+
 export interface PaymentSettingsSnapshot {
   onlineEnabled: boolean;
   cardToCardEnabled: boolean;
   provider: string;
+  gateways: GatewayConfigs;
   cards: CardToCardCard[];
 }
 
@@ -33,15 +54,16 @@ export const PAYMENT_SETTING_KEYS = [
   'paymentOnlineEnabled',
   'paymentCardToCardEnabled',
   'paymentProvider',
+  'paymentGateways',
   'cardToCardCards',
 ] as const;
 
 export type PaymentSettingKey = (typeof PAYMENT_SETTING_KEYS)[number];
 
-const DEFAULTS: PaymentSettingsSnapshot = {
+const DEFAULTS: Omit<PaymentSettingsSnapshot, 'gateways'> = {
   onlineEnabled: true,
   cardToCardEnabled: true,
-  provider: 'zarinpal',
+  provider: 'zibal',
   cards: [],
 };
 
@@ -87,6 +109,85 @@ function coerceCards(value: unknown, fallback: CardToCardCard[]): CardToCardCard
   return cards;
 }
 
+// ---------------------------------------------------------------------------
+// Gateway credentials (per-provider, stored under the 'paymentGateways' key).
+// Read: defaults merged with stored (stored wins), unknown providers dropped.
+// ---------------------------------------------------------------------------
+
+function defaultGatewayConfigs(): GatewayConfigs {
+  return {
+    zibal: { merchantId: '', sandbox: true },
+    zarinpal: { merchantId: '', sandbox: true },
+    idpay: { apiKey: '', sandbox: true },
+  };
+}
+
+function mergeGatewayConfigs(stored: unknown): GatewayConfigs {
+  const merged = defaultGatewayConfigs();
+  if (!isRecord(stored)) return merged;
+  const zibal = isRecord(stored['zibal']) ? stored['zibal'] : undefined;
+  if (zibal) {
+    if (typeof zibal['merchantId'] === 'string') merged.zibal.merchantId = zibal['merchantId'].slice(0, 128);
+    if (typeof zibal['sandbox'] === 'boolean') merged.zibal.sandbox = zibal['sandbox'];
+  }
+  const zarinpal = isRecord(stored['zarinpal']) ? stored['zarinpal'] : undefined;
+  if (zarinpal) {
+    if (typeof zarinpal['merchantId'] === 'string') merged.zarinpal.merchantId = zarinpal['merchantId'].slice(0, 128);
+    if (typeof zarinpal['sandbox'] === 'boolean') merged.zarinpal.sandbox = zarinpal['sandbox'];
+  }
+  const idpay = isRecord(stored['idpay']) ? stored['idpay'] : undefined;
+  if (idpay) {
+    if (typeof idpay['apiKey'] === 'string') merged.idpay.apiKey = idpay['apiKey'].slice(0, 128);
+    if (typeof idpay['sandbox'] === 'boolean') merged.idpay.sandbox = idpay['sandbox'];
+  }
+  return merged;
+}
+
+export interface GatewayPatch {
+  zibal?: { merchantId?: string; sandbox?: boolean };
+  zarinpal?: { merchantId?: string; sandbox?: boolean };
+  idpay?: { apiKey?: string; sandbox?: boolean };
+}
+
+/** Strict credential validation — numbers never coerce to strings. */
+function ensureCredField(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new AppError(ERR.VALIDATION(`مقدار «${field}» باید متن باشد.`));
+  }
+  if (value.trim().length > 128) {
+    throw new AppError(ERR.VALIDATION(`مقدار «${field}» بیش از حد مجاز است.`));
+  }
+  return value.trim();
+}
+
+function ensureSandbox(value: unknown): boolean {
+  if (typeof value !== 'boolean') {
+    throw new AppError(ERR.VALIDATION('مقدار «sandbox» باید بولی باشد.'));
+  }
+  return value;
+}
+
+function applyGatewayPatch(current: GatewayConfigs, patch: GatewayPatch): GatewayConfigs {
+  const merged: GatewayConfigs = {
+    zibal: { ...current.zibal },
+    zarinpal: { ...current.zarinpal },
+    idpay: { ...current.idpay },
+  };
+  if (patch.zibal) {
+    if (patch.zibal.merchantId !== undefined) merged.zibal.merchantId = ensureCredField(patch.zibal.merchantId, 'merchantId');
+    if (patch.zibal.sandbox !== undefined) merged.zibal.sandbox = ensureSandbox(patch.zibal.sandbox);
+  }
+  if (patch.zarinpal) {
+    if (patch.zarinpal.merchantId !== undefined) merged.zarinpal.merchantId = ensureCredField(patch.zarinpal.merchantId, 'merchantId');
+    if (patch.zarinpal.sandbox !== undefined) merged.zarinpal.sandbox = ensureSandbox(patch.zarinpal.sandbox);
+  }
+  if (patch.idpay) {
+    if (patch.idpay.apiKey !== undefined) merged.idpay.apiKey = ensureCredField(patch.idpay.apiKey, 'apiKey');
+    if (patch.idpay.sandbox !== undefined) merged.idpay.sandbox = ensureSandbox(patch.idpay.sandbox);
+  }
+  return merged;
+}
+
 export async function getPaymentSettings(): Promise<PaymentSettingsSnapshot> {
   const db = getDb();
   const rows = await db
@@ -94,7 +195,7 @@ export async function getPaymentSettings(): Promise<PaymentSettingsSnapshot> {
     .from(systemSettings)
     .where(inArray(systemSettings.settingKey, [...PAYMENT_SETTING_KEYS]));
 
-  const snapshot: PaymentSettingsSnapshot = { ...DEFAULTS };
+  const snapshot: PaymentSettingsSnapshot = { ...DEFAULTS, gateways: defaultGatewayConfigs() };
   for (const row of rows) {
     switch (row.settingKey) {
       case 'paymentOnlineEnabled':
@@ -105,6 +206,9 @@ export async function getPaymentSettings(): Promise<PaymentSettingsSnapshot> {
         break;
       case 'paymentProvider':
         snapshot.provider = coerceProvider(row.valueJson, DEFAULTS.provider);
+        break;
+      case 'paymentGateways':
+        snapshot.gateways = mergeGatewayConfigs(row.valueJson);
         break;
       case 'cardToCardCards':
         snapshot.cards = coerceCards(row.valueJson, DEFAULTS.cards);
@@ -126,13 +230,15 @@ export interface PaymentSettingsPatch {
   paymentOnlineEnabled?: boolean;
   paymentCardToCardEnabled?: boolean;
   paymentProvider?: string;
+  paymentGateways?: GatewayPatch;
   cardToCardCards?: Array<{ id?: string; bankName: string; cardNumber: string; holderName: string }>;
 }
 
 /**
  * Persists only the provided keys. Returns the list of keys actually written.
  * Values are stored as native JSON documents (see module docblock); card ids
- * are generated when the admin payload omits them.
+ * are generated when the admin payload omits them. The gateways patch is
+ * merged per-provider over the currently stored config.
  */
 export async function putPaymentSettings(patch: PaymentSettingsPatch): Promise<string[]> {
   const updated: string[] = [];
@@ -147,6 +253,17 @@ export async function putPaymentSettings(patch: PaymentSettingsPatch): Promise<s
   if (patch.paymentProvider !== undefined) {
     await upsertSetting('paymentProvider', patch.paymentProvider);
     updated.push('paymentProvider');
+  }
+  if (patch.paymentGateways !== undefined) {
+    const db = getDb();
+    const [row] = await db
+      .select({ valueJson: systemSettings.valueJson })
+      .from(systemSettings)
+      .where(eq(systemSettings.settingKey, 'paymentGateways'))
+      .limit(1);
+    const merged = applyGatewayPatch(mergeGatewayConfigs(row?.valueJson), patch.paymentGateways);
+    await upsertSetting('paymentGateways', merged);
+    updated.push('paymentGateways');
   }
   if (patch.cardToCardCards !== undefined) {
     const cards: CardToCardCard[] = patch.cardToCardCards.map((c) => ({

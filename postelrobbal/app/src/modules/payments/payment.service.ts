@@ -8,6 +8,10 @@ import { emitEvent } from '../../core/events.js';
 import { audit } from '../../core/audit.js';
 import { loadEnv } from '../../config/env.js';
 import { ZarinpalAdapter } from '../../providers/payments/zarinpal.js';
+import type { PaymentGatewayAdapter } from '../../providers/payments/zarinpal.js';
+import { ZibalAdapter } from '../../providers/payments/zibal.js';
+import { IdpayAdapter } from '../../providers/payments/idpay.js';
+import type { PaymentSettingsSnapshot } from './payment-settings.service.js';
 import { activateSubscriptionTx } from '../subscriptions/plan.service.js';
 import type { Tx } from '../subscriptions/plan.service.js';
 import { moveMoneyTx, pointCreditTx } from '../wallet/wallet.service.js';
@@ -16,9 +20,72 @@ import { getPaymentSettings } from './payment-settings.service.js';
 export const POINT_TO_RIAL = 10; // ۱ امتیاز = ۱۰ ریال
 const WALLET_TOPUP_MIN = 100_000; // Rial
 
-function gateway(): ZarinpalAdapter {
+const ONLINE_PROVIDERS = ['zibal', 'zarinpal', 'idpay'] as const;
+type OnlineProvider = (typeof ONLINE_PROVIDERS)[number];
+
+interface ResolvedGateway {
+  provider: OnlineProvider;
+  credential: string;
+  sandbox: boolean;
+}
+
+/**
+ * Resolves the active gateway from the admin-configured settings. The env
+ * PAYMENT_MERCHANT_ID stays as a fallback for zibal/zarinpal so legacy deploys
+ * keep working; idpay has no env fallback (panel-issued API key only).
+ */
+function resolveGateway(provider: string, settings: PaymentSettingsSnapshot): ResolvedGateway {
   const env = loadEnv();
-  return new ZarinpalAdapter(env.PAYMENT_MERCHANT_ID ?? '', env.NODE_ENV !== 'production');
+  const sandboxDefault = env.NODE_ENV !== 'production';
+  const envMerchant = (env.PAYMENT_MERCHANT_ID ?? '').trim();
+  switch (provider) {
+    case 'zibal': {
+      const cfg = settings.gateways.zibal;
+      return {
+        provider: 'zibal',
+        credential: (cfg.merchantId || envMerchant).trim(),
+        sandbox: cfg.sandbox ?? sandboxDefault,
+      };
+    }
+    case 'idpay': {
+      const cfg = settings.gateways.idpay;
+      return { provider: 'idpay', credential: cfg.apiKey.trim(), sandbox: cfg.sandbox ?? sandboxDefault };
+    }
+    default: {
+      const cfg = settings.gateways.zarinpal;
+      return {
+        provider: 'zarinpal',
+        credential: (cfg.merchantId || envMerchant).trim(),
+        sandbox: cfg.sandbox ?? sandboxDefault,
+      };
+    }
+  }
+}
+
+/**
+ * Async gateway factory (settings-driven; admin-panel v2).
+ * Reads the admin-configured provider + credentials and returns the matching
+ * adapter. An optional `hint` (the payment's stored gateway column) pins the
+ * adapter to the provider that created the payment, so a provider switch
+ * between creation and callback cannot break verification.
+ * Guard: when the resolved credential is empty and there is no usable fallback
+ * (zibal sandbox may degrade to the public test merchant 'zibal'), throw the
+ * stable Persian GATEWAY_NOT_CONFIGURED — before any IO or DB write.
+ */
+export async function gatewayFor(hint?: string): Promise<PaymentGatewayAdapter> {
+  const settings = await getPaymentSettings();
+  const provider = hint && (ONLINE_PROVIDERS as readonly string[]).includes(hint) ? hint : settings.provider;
+  const resolved = resolveGateway(provider, settings);
+  const unconfigured = !resolved.credential && !(resolved.provider === 'zibal' && resolved.sandbox);
+  if (unconfigured) throw new AppError(ERR.GATEWAY_NOT_CONFIGURED());
+  switch (resolved.provider) {
+    case 'zibal':
+      return new ZibalAdapter(resolved.credential, resolved.sandbox);
+    case 'idpay':
+      return new IdpayAdapter(resolved.credential, resolved.sandbox);
+    default:
+      return new ZarinpalAdapter(resolved.credential, resolved.sandbox);
+  }
 }
 
 export interface CreatedPaymentResult {
@@ -37,7 +104,7 @@ async function createPaymentRow(input: {
   const db = getDb();
   const env = loadEnv();
   const id = newId();
-  const gw = gateway();
+  const gw = await gatewayFor();
   const created = await gw.createPayment({
     amountRial: input.amountRial,
     description: input.description,
@@ -138,11 +205,9 @@ export async function createSubscriptionIntent(
 
   if (input.method === 'online') {
     // Graceful degradation when the gateway is unconfigured (sandbox path).
-    // The adapter enforces the same guard — this early check avoids any IO.
-    const env = loadEnv();
-    if (!env.PAYMENT_MERCHANT_ID || env.PAYMENT_MERCHANT_ID.trim() === '') {
-      throw new AppError(ERR.GATEWAY_NOT_CONFIGURED());
-    }
+    // gatewayFor() enforces the same guard without any IO — this early check
+    // avoids creating the payment row when no provider is configured.
+    await gatewayFor();
     const result = await createSubscriptionPayment(tenantId, plan.code, months);
     return { paymentId: result.paymentId, redirectUrl: result.redirectUrl };
   }
@@ -235,6 +300,10 @@ export interface CallbackQuery {
   paymentId: string;
   Authority?: string;
   Status?: string;
+  /** Zibal callback mirrors the trackId we stored as authority. */
+  trackId?: string;
+  /** Lowercase gateway-specific status param (zibal/idpay send `status`). */
+  status?: string;
 }
 
 export interface CallbackResult {
@@ -340,8 +409,10 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
   const [payment] = await db.select().from(payments).where(eq(payments.id, q.paymentId)).limit(1);
   if (!payment) throw new AppError(ERR.NOT_FOUND('پرداخت'));
 
-  // Authority binding: callback authority must match the one we created.
-  if (q.Authority && payment.authority && q.Authority !== payment.authority) {
+  // Authority binding: callback authority must match the one we created
+  // (zarinpal sends Authority; zibal sends trackId; idpay is bound server-side).
+  const reportedAuthority = q.Authority ?? q.trackId;
+  if (reportedAuthority && payment.authority && reportedAuthority !== payment.authority) {
     throw new AppError(ERR.PAYMENT_VERIFY_FAILED());
   }
 
@@ -353,11 +424,16 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
     return { ok: false, message: 'این پرداخت قابل تأیید نیست.' };
   }
 
-  // User cancelled or gateway reported failure
-  if (q.Status !== 'OK') {
+  // Gateway-reported status. Zarinpal sends Status=OK|NOK; zibal/idpay send a
+  // gateway-specific `status`. A *negative* report fails immediately;
+  // anything else (including an absent param) falls through to the
+  // authoritative server-side verify (§117 — the browser is never trusted).
+  const reported = (q.Status ?? q.status ?? '').trim().toLowerCase();
+  const NEGATIVE_STATUSES = ['nok', '-1', '0', 'fail', 'failed', 'cancel', 'cancelled', 'canceled', 'error'];
+  if (reported !== '' && NEGATIVE_STATUSES.includes(reported)) {
     await db
       .update(payments)
-      .set({ state: 'FAILED', metaJson: { gatewayStatus: q.Status ?? 'NOK' } })
+      .set({ state: 'FAILED', metaJson: { gatewayStatus: reported } })
       .where(and(eq(payments.id, payment.id), eq(payments.state, payment.state)));
     await emitEvent({ name: 'payment.failed', tenantId: payment.tenantId, subjectType: 'payment', subjectId: payment.id });
     return { ok: false, message: 'پرداخت ناموفق بود یا لغو شد.' };
@@ -365,7 +441,9 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
 
   if (!payment.authority) throw new AppError(ERR.PAYMENT_VERIFY_FAILED());
 
-  const gw = gateway();
+  // Verify with the SAME provider that created this payment (payments.gateway
+  // column), so admin provider switches never break in-flight verifications.
+  const gw = await gatewayFor(payment.gateway);
   const verified = await gw.verifyPayment(Number(payment.amountRial), payment.authority);
   if (!verified.ok) {
     await db

@@ -382,7 +382,9 @@ export const goldSnapshots = mysqlTable('gold_snapshots', {
   configId: char('config_id', { length: 26 }).notNull(),
   pricesJson: json('prices_json').$type<unknown>().notNull(),
   contentHash: char('content_hash', { length: 64 }).notNull(),
-  capturedAt: ts(),
+  // NOTE: this table's timestamp column is `captured_at` (not `created_at`),
+  // so it must NOT use the shared ts() helper which hardcodes 'created_at'.
+  capturedAt: datetime('captured_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   published: tinyint('published').notNull().default(0),
 }, (t) => [index('idx_gold_snap').on(t.configId, t.capturedAt)]);
 

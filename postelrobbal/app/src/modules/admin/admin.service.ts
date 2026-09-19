@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import {
   users,
@@ -10,8 +10,16 @@ import {
   systemSettings,
   channelRegistry,
   posts,
+  channels,
+  bots,
+  media,
+  tickets,
+  aiJobs,
+  goldConfigs,
+  goldSnapshots,
 } from '../../db/schema.js';
 import { AppError, ERR } from '../../core/errors.js';
+import { newId } from '../../core/ids.js';
 import type { PlanLimits, PlanFeatures } from '../../db/schema.js';
 import { notifyTenant } from '../notifications/delivery.js';
 import { activateSubscription, activateSubscriptionTx } from '../subscriptions/plan.service.js';
@@ -20,37 +28,174 @@ import { revokeAllUserSessions } from '../../security/sessions.js';
 import { referralHookFirstPurchase } from '../payments/payment.service.js';
 import { getPaymentSettings } from '../payments/payment-settings.service.js';
 
-export async function getOverview(): Promise<{
-  users: number;
-  activeSubscriptions: number;
-  paymentsVerifiedSum30d: number;
-  deliveriesFailed24h: number;
-  scheduledPosts: number;
-}> {
+export interface AdminOverview {
+  users: { total: number; active: number; suspended: number; new30d: number };
+  channels: { total: number; active: number; telegram: number; bale: number; rubika: number };
+  bots: { total: number; active: number; telegram: number; bale: number; rubika: number };
+  gold: { configs: number; enabled: number; snapshots24h: number };
+  posts: { total: number; scheduled: number; published30d: number; failed24h: number };
+  payments: { verifiedCount30d: number; verifiedSum30d: number; verifiedSumTotal: number; pendingReview: number };
+  subscriptions: { active: number; byPlan: Array<{ planName: string; count: number }> };
+  usage: {
+    aiJobs30d: number;
+    mediaCount: number;
+    mediaBytes: number;
+    ticketsOpen: number;
+    deliveries24h: number;
+    deliveriesFailed24h: number;
+  };
+}
+
+const num = (v: unknown): number => Number(v ?? 0);
+
+type CountRow = { value: number };
+type SumRow = { sum: string | number | null };
+type MediaRow = { value: number; bytes: string | number | null };
+type PlatformRow = { platform: string; value: number };
+type PlanCountRow = { planName: string; value: number };
+
+/** Runs thunks with bounded concurrency (pool: connectionLimit=DB_POOL_MAX=5,
+ *  queueLimit=20 — an unbounded Promise.all of 27 queries overflows the queue
+ *  and mysql2 aborts with "Queue limit reached"). */
+async function mapLimit<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (cursor < tasks.length) {
+      const i = cursor++;
+      const task = tasks[i];
+      if (task === undefined) break;
+      results[i] = await task();
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Dashboard overview (admin-panel v2 nested shape).
+ * Semantics verified against the real schema enums:
+ *  - channels/bots: status 'ACTIVE' = connected; platform counts cover all rows.
+ *  - post_targets states: PENDING|PROCESSING|SENT|RETRYING|FAILED|CANCELLED —
+ *    successful deliveries are state 'SENT' (there is no PUBLISHED target state).
+ *  - tickets states: OPEN|ANSWERED|CLOSED — open = state != CLOSED.
+ */
+export async function getOverview(): Promise<AdminOverview> {
   const db = getDb();
-  const [userRow] = await db.select({ value: count() }).from(users);
-  const [subRow] = await db.select({ value: count() }).from(subscriptions).where(eq(subscriptions.state, 'ACTIVE'));
-
   const since30d = new Date(Date.now() - 30 * 86400_000);
-  const [payRow] = await db
-    .select({ sum: sql<string | number | null>`COALESCE(SUM(${payments.amountRial}), 0)` })
-    .from(payments)
-    .where(and(eq(payments.state, 'VERIFIED'), gte(payments.verifiedAt, since30d)));
-
   const since24h = new Date(Date.now() - 24 * 3600_000);
-  const [failRow] = await db
-    .select({ value: count() })
-    .from(postTargets)
-    .where(and(eq(postTargets.state, 'FAILED'), gte(postTargets.updatedAt, since24h)));
 
-  const [schedRow] = await db.select({ value: count() }).from(posts).where(eq(posts.state, 'SCHEDULED'));
+  const results = await mapLimit<unknown>([
+    () => db.select({ value: count() }).from(users),
+    () => db.select({ value: count() }).from(users).where(eq(users.status, 'ACTIVE')),
+    () => db.select({ value: count() }).from(users).where(eq(users.status, 'SUSPENDED')),
+    () => db.select({ value: count() }).from(users).where(gte(users.createdAt, since30d)),
+    () => db.select({ value: count() }).from(channels),
+    () => db.select({ value: count() }).from(channels).where(eq(channels.status, 'ACTIVE')),
+    () => db.select({ platform: channels.platform, value: count() }).from(channels).groupBy(channels.platform),
+    () => db.select({ value: count() }).from(bots),
+    () => db.select({ value: count() }).from(bots).where(eq(bots.status, 'ACTIVE')),
+    () => db.select({ platform: bots.platform, value: count() }).from(bots).groupBy(bots.platform),
+    () => db.select({ value: count() }).from(goldConfigs),
+    () => db.select({ value: count() }).from(goldConfigs).where(eq(goldConfigs.isEnabled, 1)),
+    () => db.select({ value: count() }).from(goldSnapshots).where(gte(goldSnapshots.capturedAt, since24h)),
+    () => db.select({ value: count() }).from(posts),
+    () => db.select({ value: count() }).from(posts).where(eq(posts.state, 'SCHEDULED')),
+    () => db.select({ value: count() }).from(posts).where(and(eq(posts.state, 'PUBLISHED'), gte(posts.publishedAt, since30d))),
+    () => db.select({ value: count() }).from(postTargets).where(and(eq(postTargets.state, 'FAILED'), gte(postTargets.updatedAt, since24h))),
+    () => db.select({ value: count() }).from(postTargets).where(and(eq(postTargets.state, 'SENT'), gte(postTargets.updatedAt, since24h))),
+    () => db.select({ value: count() }).from(payments).where(and(eq(payments.state, 'VERIFIED'), gte(payments.verifiedAt, since30d))),
+    () => db.select({ value: count() }).from(payments).where(eq(payments.state, 'PENDING_REVIEW')),
+    () => db.select({ sum: sql<string | number | null>`COALESCE(SUM(${payments.amountRial}), 0)` }).from(payments).where(and(eq(payments.state, 'VERIFIED'), gte(payments.verifiedAt, since30d))),
+    () => db.select({ sum: sql<string | number | null>`COALESCE(SUM(${payments.amountRial}), 0)` }).from(payments).where(eq(payments.state, 'VERIFIED')),
+    () => db.select({ value: count() }).from(subscriptions).where(eq(subscriptions.state, 'ACTIVE')),
+    () => db
+      .select({ planName: plans.nameFa, value: count() })
+      .from(subscriptions)
+      .innerJoin(plans, eq(plans.id, subscriptions.planId))
+      .where(eq(subscriptions.state, 'ACTIVE'))
+      .groupBy(plans.nameFa),
+    () => db.select({ value: count() }).from(aiJobs).where(gte(aiJobs.createdAt, since30d)),
+    () => db.select({ value: count(), bytes: sql<string | number | null>`COALESCE(SUM(${media.sizeBytes}), 0)` }).from(media),
+    () => db.select({ value: count() }).from(tickets).where(ne(tickets.state, 'CLOSED')),
+  ], 5);
+
+  const [
+    userTotal, userActive, userSuspended, userNew30d,
+    channelTotal, channelActive, channelPlatforms,
+    botTotal, botActive, botPlatforms,
+    goldConfigRows, goldEnabled, goldSnap24h,
+    postTotal, postScheduled, postPublished30d, targetFailed24h, targetSent24h,
+    payVerified30d, payPendingReview, paySum30d, paySumTotal,
+    subsActive, subsByPlan,
+    aiJobs30d, mediaRows, ticketOpen,
+  ] = results as [
+    CountRow[], CountRow[], CountRow[], CountRow[],
+    CountRow[], CountRow[], PlatformRow[],
+    CountRow[], CountRow[], PlatformRow[],
+    CountRow[], CountRow[], CountRow[],
+    CountRow[], CountRow[], CountRow[], CountRow[], CountRow[],
+    CountRow[], CountRow[], SumRow[], SumRow[],
+    CountRow[], PlanCountRow[],
+    CountRow[], MediaRow[], CountRow[],
+  ];
+
+  const platformCounts = (
+    rows: Array<{ platform: string; value: number }>
+  ): { telegram: number; bale: number; rubika: number } => {
+    const out = { telegram: 0, bale: 0, rubika: 0 };
+    for (const r of rows) {
+      if (r.platform === 'telegram' || r.platform === 'bale' || r.platform === 'rubika') out[r.platform] = num(r.value);
+    }
+    return out;
+  };
 
   return {
-    users: Number(userRow?.value ?? 0),
-    activeSubscriptions: Number(subRow?.value ?? 0),
-    paymentsVerifiedSum30d: Number(payRow?.sum ?? 0),
-    deliveriesFailed24h: Number(failRow?.value ?? 0),
-    scheduledPosts: Number(schedRow?.value ?? 0),
+    users: {
+      total: num(userTotal[0]?.value),
+      active: num(userActive[0]?.value),
+      suspended: num(userSuspended[0]?.value),
+      new30d: num(userNew30d[0]?.value),
+    },
+    channels: {
+      total: num(channelTotal[0]?.value),
+      active: num(channelActive[0]?.value),
+      ...platformCounts(channelPlatforms.map((r) => ({ platform: r.platform, value: Number(r.value) }))),
+    },
+    bots: {
+      total: num(botTotal[0]?.value),
+      active: num(botActive[0]?.value),
+      ...platformCounts(botPlatforms.map((r) => ({ platform: r.platform, value: Number(r.value) }))),
+    },
+    gold: {
+      configs: num(goldConfigRows[0]?.value),
+      enabled: num(goldEnabled[0]?.value),
+      snapshots24h: num(goldSnap24h[0]?.value),
+    },
+    posts: {
+      total: num(postTotal[0]?.value),
+      scheduled: num(postScheduled[0]?.value),
+      published30d: num(postPublished30d[0]?.value),
+      failed24h: num(targetFailed24h[0]?.value),
+    },
+    payments: {
+      verifiedCount30d: num(payVerified30d[0]?.value),
+      verifiedSum30d: num(paySum30d[0]?.sum),
+      verifiedSumTotal: num(paySumTotal[0]?.sum),
+      pendingReview: num(payPendingReview[0]?.value),
+    },
+    subscriptions: {
+      active: num(subsActive[0]?.value),
+      byPlan: subsByPlan.map((r) => ({ planName: r.planName, count: num(r.value) })),
+    },
+    usage: {
+      aiJobs30d: num(aiJobs30d[0]?.value),
+      mediaCount: num(mediaRows[0]?.value),
+      mediaBytes: num(mediaRows[0]?.bytes),
+      ticketsOpen: num(ticketOpen[0]?.value),
+      deliveries24h: num(targetSent24h[0]?.value),
+      deliveriesFailed24h: num(targetFailed24h[0]?.value),
+    },
   };
 }
 
@@ -87,6 +232,112 @@ export async function listUsers(
     .limit(size)
     .offset((p - 1) * size);
   return { items: rows, total: Number(totalRow?.value ?? 0), page: p, pageSize: size };
+}
+
+export type AdminPlatform = 'telegram' | 'bale' | 'rubika';
+
+export async function listChannels(
+  search: string | undefined,
+  platform: AdminPlatform | undefined,
+  page: number,
+  pageSize: number
+): Promise<{
+  items: Array<{ id: string; platform: string; channelRef: string; title: string; status: string; createdAt: Date; ownerEmail: string | null; ownerName: string }>;
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const db = getDb();
+  const p = Math.max(1, page);
+  const size = Math.min(100, Math.max(1, pageSize));
+  const term = search?.trim();
+  const like = term ? `%${term.replace(/[%_]/g, '')}%` : null;
+  const where = and(
+    platform ? eq(channels.platform, platform) : undefined,
+    like
+      ? or(sql`${channels.title} LIKE ${like}`, sql`${channels.channelRef} LIKE ${like}`, sql`${users.email} LIKE ${like}`)
+      : undefined
+  );
+
+  const ownerName = sql<string>`COALESCE(CONCAT_WS(' ', ${users.firstName}, ${users.lastName}), '')`;
+  const [totalRow] = await db
+    .select({ value: count() })
+    .from(channels)
+    .leftJoin(users, eq(users.id, channels.tenantId))
+    .where(where);
+  const rows = await db
+    .select({
+      id: channels.id,
+      platform: channels.platform,
+      channelRef: channels.channelRef,
+      title: channels.title,
+      status: channels.status,
+      createdAt: channels.createdAt,
+      ownerEmail: users.email,
+      ownerName,
+    })
+    .from(channels)
+    .leftJoin(users, eq(users.id, channels.tenantId))
+    .where(where)
+    .orderBy(desc(channels.createdAt))
+    .limit(size)
+    .offset((p - 1) * size);
+  return { items: rows, total: Number(totalRow?.value ?? 0), page: p, pageSize: size };
+}
+
+export async function listBots(
+  search: string | undefined,
+  platform: AdminPlatform | undefined,
+  page: number,
+  pageSize: number
+): Promise<{
+  items: Array<{ id: string; platform: string; username: string | null; title: string; status: string; mode: string; aiEnabled: boolean; createdAt: Date; ownerEmail: string | null }>;
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const db = getDb();
+  const p = Math.max(1, page);
+  const size = Math.min(100, Math.max(1, pageSize));
+  const term = search?.trim();
+  const like = term ? `%${term.replace(/[%_]/g, '')}%` : null;
+  const where = and(
+    platform ? eq(bots.platform, platform) : undefined,
+    like
+      ? or(sql`${bots.title} LIKE ${like}`, sql`${bots.username} LIKE ${like}`, sql`${users.email} LIKE ${like}`)
+      : undefined
+  );
+
+  const [totalRow] = await db
+    .select({ value: count() })
+    .from(bots)
+    .leftJoin(users, eq(users.id, bots.tenantId))
+    .where(where);
+  // NOTE: tokens (token_encrypted/token_masked) are never selected here.
+  const rows = await db
+    .select({
+      id: bots.id,
+      platform: bots.platform,
+      username: bots.username,
+      title: bots.title,
+      status: bots.status,
+      mode: bots.mode,
+      aiEnabled: bots.aiEnabled,
+      createdAt: bots.createdAt,
+      ownerEmail: users.email,
+    })
+    .from(bots)
+    .leftJoin(users, eq(users.id, bots.tenantId))
+    .where(where)
+    .orderBy(desc(bots.createdAt))
+    .limit(size)
+    .offset((p - 1) * size);
+  return {
+    items: rows.map((r) => ({ ...r, aiEnabled: Number(r.aiEnabled) === 1 })),
+    total: Number(totalRow?.value ?? 0),
+    page: p,
+    pageSize: size,
+  };
 }
 
 export async function setUserSuspended(
@@ -348,23 +599,102 @@ export async function listPlans(): Promise<Array<Record<string, unknown>>> {
 export interface PlanPatch {
   nameFa?: string;
   priceRial?: number;
+  periodDays?: number;
+  isActive?: boolean;
   limitsJson?: Record<string, unknown>;
   featuresJson?: Record<string, unknown>;
 }
 
+const PLAN_LIMIT_KEYS = ['max_channels', 'max_posts', 'max_bots', 'max_schedules', 'ai_monthly', 'storage_mb'] as const;
+
+const DEFAULT_PLAN_LIMITS: PlanLimits = {
+  max_channels: 1,
+  max_posts: 30,
+  max_bots: 1,
+  max_schedules: 10,
+  ai_monthly: 50,
+  storage_mb: 512,
+};
+
+const DEFAULT_PLAN_FEATURES: PlanFeatures = {
+  gold_ticker: false,
+  auto_responder: false,
+  woocommerce: false,
+  api_access: false,
+};
+
 function numericLimit(record: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.entries(record).every(([k, v]) => keys.includes(k) && typeof v === 'number' && Number.isFinite(v) && v >= 0);
+}
+
+export async function createPlan(input: {
+  code: string;
+  nameFa: string;
+  priceRial: number;
+  periodDays: number;
+  limitsJson?: Record<string, unknown>;
+  featuresJson?: Record<string, unknown>;
+}): Promise<{ id: string }> {
+  const db = getDb();
+  const code = input.code.trim();
+  const [existing] = await db.select({ id: plans.id }).from(plans).where(eq(plans.code, code)).limit(1);
+  if (existing) throw new AppError(ERR.VALIDATION('کد پلن تکراری است.'));
+
+  const limits = { ...DEFAULT_PLAN_LIMITS, ...(input.limitsJson ?? {}) };
+  if (!numericLimit(limits, PLAN_LIMIT_KEYS)) {
+    throw new AppError(ERR.VALIDATION('قالب محدودیت‌های پلن معتبر نیست.'));
+  }
+  const features = { ...DEFAULT_PLAN_FEATURES, ...(input.featuresJson ?? {}) };
+  if (!Object.values(features).every((v) => typeof v === 'boolean')) {
+    throw new AppError(ERR.VALIDATION('قالب امکانات پلن معتبر نیست.'));
+  }
+
+  const id = newId();
+  await db.insert(plans).values({
+    id,
+    code,
+    nameFa: input.nameFa.trim().slice(0, 80),
+    priceRial: Math.max(0, Math.floor(input.priceRial)),
+    periodDays: Math.min(3650, Math.max(1, Math.floor(input.periodDays))),
+    limitsJson: limits,
+    featuresJson: features,
+    sortOrder: 0,
+    isActive: 1,
+  });
+  return { id };
+}
+
+export async function deletePlan(planId: string): Promise<void> {
+  const db = getDb();
+  const [plan] = await db.select({ id: plans.id }).from(plans).where(eq(plans.id, planId)).limit(1);
+  if (!plan) throw new AppError(ERR.NOT_FOUND('پلن'));
+  // Any subscription row (ACTIVE, EXPIRED or CANCELLED) keeps the plan alive —
+  // history must stay resolvable; deactivate the plan instead of deleting it.
+  const [refRow] = await db.select({ value: count() }).from(subscriptions).where(eq(subscriptions.planId, planId));
+  if (Number(refRow?.value ?? 0) > 0) {
+    throw new AppError(ERR.VALIDATION('به این پلن اشتراک فعال متصل است؛ ابتدا آن اشتراک‌ها را بررسی کنید یا پلن را غیرفعال کنید.'));
+  }
+  await db.delete(plans).where(eq(plans.id, planId));
 }
 
 export async function updatePlan(planId: string, patch: PlanPatch): Promise<void> {
   const db = getDb();
   const [plan] = await db.select({ id: plans.id }).from(plans).where(eq(plans.id, planId)).limit(1);
   if (!plan) throw new AppError(ERR.NOT_FOUND('پلن'));
-  const update: Partial<{ nameFa: string; priceRial: number; limitsJson: PlanLimits; featuresJson: PlanFeatures }> = {};
+  const update: Partial<{
+    nameFa: string;
+    priceRial: number;
+    periodDays: number;
+    isActive: number;
+    limitsJson: PlanLimits;
+    featuresJson: PlanFeatures;
+  }> = {};
   if (patch.nameFa !== undefined) update.nameFa = patch.nameFa.trim().slice(0, 80);
   if (patch.priceRial !== undefined) update.priceRial = Math.max(0, Math.floor(patch.priceRial));
+  if (patch.periodDays !== undefined) update.periodDays = Math.min(3650, Math.max(1, Math.floor(patch.periodDays)));
+  if (patch.isActive !== undefined) update.isActive = patch.isActive ? 1 : 0;
   if (patch.limitsJson !== undefined) {
-    if (!numericLimit(patch.limitsJson, ['max_channels', 'max_posts', 'max_bots', 'max_schedules', 'ai_monthly', 'storage_mb'])) {
+    if (!numericLimit(patch.limitsJson, PLAN_LIMIT_KEYS)) {
       throw new AppError(ERR.VALIDATION('قالب محدودیت‌های پلن معتبر نیست.'));
     }
     update.limitsJson = patch.limitsJson as unknown as PlanLimits;
