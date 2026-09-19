@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { RowDataPacket } from 'mysql2/promise';
+import { createConnection, type RowDataPacket } from 'mysql2/promise';
+import { loadEnv } from '../config/env.js';
 import { getPool, closeDb } from './client.js';
 
 /**
@@ -25,22 +26,31 @@ export async function runMigrations(migrationsDir: string): Promise<string[]> {
   }
 
   const newlyApplied: string[] = [];
-  for (const file of files) {
-    if (applied.has(file)) continue;
-    const sqlText = await readFile(path.join(migrationsDir, file), 'utf8');
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
-      await conn.query(sqlText);
-      await conn.query('INSERT INTO schema_migrations (name) VALUES (?)', [file]);
-      await conn.commit();
-      newlyApplied.push(file);
-    } catch (err) {
-      await conn.rollback();
-      throw new Error(`Migration ${file} failed: ${(err as Error).message}`);
-    } finally {
-      conn.release();
+  const pending = files.filter((f) => !applied.has(f));
+  if (pending.length === 0) return newlyApplied;
+
+  // Migration files are multi-statement SQL. The application pool keeps
+  // multipleStatements disabled as a SQL-injection hardening measure, so
+  // migrations run on a dedicated connection with it enabled — and on
+  // nothing else (§66).
+  const env = loadEnv();
+  const conn = await createConnection({ uri: env.DATABASE_URL, multipleStatements: true });
+  try {
+    for (const file of pending) {
+      const sqlText = await readFile(path.join(migrationsDir, file), 'utf8');
+      try {
+        await conn.beginTransaction();
+        await conn.query(sqlText);
+        await conn.query('INSERT INTO schema_migrations (name) VALUES (?)', [file]);
+        await conn.commit();
+        newlyApplied.push(file);
+      } catch (err) {
+        await conn.rollback();
+        throw new Error(`Migration ${file} failed: ${(err as Error).message}`);
+      }
     }
+  } finally {
+    await conn.end();
   }
   return newlyApplied;
 }
